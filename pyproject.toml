@@ -1,11 +1,11 @@
 [tool.uv.workspace]
 members = [
-    "apps/api",
-    "services/llm",
-    "services/memory",
-    "services/retrieval",
-    "services/storage",
-    "packages/config",
+    "backend/apps/api",
+    "backend/services/llm",
+    "backend/services/memory",
+    "backend/services/retrieval",
+    "backend/services/storage",
+    "backend/packages/config",
     "eval",
 ]
 
@@ -37,7 +37,7 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["backend", "eval"]
 
 [dependency-groups]
 dev = [
