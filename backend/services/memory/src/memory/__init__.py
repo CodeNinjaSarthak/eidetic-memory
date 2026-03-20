@@ -1,3 +1,4 @@
+from memory.manager import MemoryManager
 from memory.models import (
     ConversationPair,
     MemoryFact,
@@ -6,11 +7,14 @@ from memory.models import (
     Message,
 )
 from memory.pipeline.extraction import ExtractionPipeline
+from memory.pipeline.update import EvolutionEngine
 
 __all__ = [
     "ConversationPair",
+    "EvolutionEngine",
     "ExtractionPipeline",
     "MemoryFact",
+    "MemoryManager",
     "MemoryOperation",
     "MemoryUpdate",
     "Message",
