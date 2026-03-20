@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from config.settings import Settings
 from storage.base import AbstractMemoryStore
 from storage.models import MemoryFact
+from storage.qdrant import QdrantMemoryStore
 
 
 class FakeMemoryStore(AbstractMemoryStore):
@@ -160,3 +162,21 @@ async def test_upsert_overwrites_existing_fact_with_same_id(
 
     assert retrieved is not None
     assert retrieved.content == "updated"
+
+
+def test_qdrant_store_is_constructable_from_settings() -> None:
+    """QdrantMemoryStore.from_settings wires all Settings fields correctly."""
+    settings = Settings(
+        _env_file=None,
+        qdrant_url="http://localhost:6333",
+        qdrant_api_key="test-key",
+        qdrant_collection_name="test-collection",
+        embedding_dimension=768,
+        llm_provider="claude",
+        anthropic_api_key="sk-ant-test",
+    )
+
+    store = QdrantMemoryStore.from_settings(settings)
+
+    assert store._collection_name == "test-collection"
+    assert store._embedding_dimension == 768
