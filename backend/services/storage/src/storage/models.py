@@ -40,6 +40,10 @@ class MemoryFact(BaseModel):
         self.content = new_content
         self.updated_at = datetime.now(UTC)
 
+    def increment_access_count(self) -> None:
+        """Increment the access count in metadata, defaulting from 0 if missing."""
+        self.metadata["access_count"] = self.metadata.get("access_count", 0) + 1
+
 
 class SearchResult(BaseModel):
     """A memory fact paired with its similarity score from a search query."""
