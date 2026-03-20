@@ -1,2 +1,4 @@
-def hello() -> str:
-    return "Hello from llm!"
+from llm.embeddings.base import AbstractEmbeddingService, EmbeddingError
+from llm.embeddings.openai import OpenAIEmbeddingService
+
+__all__ = ["AbstractEmbeddingService", "EmbeddingError", "OpenAIEmbeddingService"]
