@@ -8,12 +8,14 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "llm",
     "pydantic>=2.12.5",
     "storage",
 ]
 
 [tool.uv.sources]
 storage = { workspace = true }
+llm = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.10.10,<0.11.0"]
