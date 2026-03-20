@@ -1,3 +1,4 @@
+from memory.manager import MemoryManager
 from memory.models import (
     ConversationPair,
     MemoryFact,
@@ -13,6 +14,7 @@ __all__ = [
     "EvolutionEngine",
     "ExtractionPipeline",
     "MemoryFact",
+    "MemoryManager",
     "MemoryOperation",
     "MemoryUpdate",
     "Message",
