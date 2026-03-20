@@ -1,7 +1,29 @@
 [project]
 name = "api"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI HTTP layer for the eidetic-memory service"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "config",
+    "memory",
+    "retrieval",
+]
+
+[tool.uv.sources]
+config = { workspace = true }
+memory = { workspace = true }
+retrieval = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.10.10,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.0",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
