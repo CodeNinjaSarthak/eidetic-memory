@@ -1,6 +1,12 @@
 """Qdrant implementation of the memory store."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from config.settings import Settings
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
@@ -32,6 +38,16 @@ class QdrantMemoryStore(AbstractMemoryStore):
         self._client = AsyncQdrantClient(url=url, api_key=api_key)
         self._collection_name = collection_name
         self._embedding_dimension = embedding_dimension
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> QdrantMemoryStore:
+        """Construct a QdrantMemoryStore from application settings."""
+        return cls(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+            collection_name=settings.qdrant_collection_name,
+            embedding_dimension=settings.embedding_dimension,
+        )
 
     async def _ensure_collection(self) -> None:
         """Create the collection if it does not already exist."""
