@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# dependencies = ["openai>=2.29.0", "qdrant-client>=1.7.0", "python-dotenv>=1.0.0"]
+# dependencies = ["openai>=2.29.0", "qdrant-client>=1.7.0", "python-dotenv>=1.0.0", "tqdm>=4.66.0"]
 # ///
 """
 Ingest LoCoMo dataset into Qdrant for evaluation.
@@ -16,18 +16,15 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from uuid import NAMESPACE_DNS, uuid5
 
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance,
-    PayloadSchemaType,
-    PointStruct,
-    VectorParams,
-)
+from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
+from tqdm import tqdm
 
 # ── Constants ────────────────────────────────────────────────
 COLLECTION_NAME = "locomo_eval"
@@ -149,6 +146,8 @@ def main() -> None:
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_version="2024-02-01",
+        timeout=30.0,
+        max_retries=0,
     )
 
     total_ingested = 0
@@ -172,41 +171,47 @@ def main() -> None:
             )
             existing = {str(p.id) for p in retrieved}
         except Exception as e:
-            print(f"  Warning: could not check existing points: {e}")
+            tqdm.write(f"  Warning: could not check existing points: {e}")
 
         # Filter to new turns only
-        new_turns = [
-            (pid, turn)
-            for pid, turn in zip(point_ids, turns)
-            if pid not in existing
-        ]
+        new_turns = [(pid, turn) for pid, turn in zip(point_ids, turns) if pid not in existing]
 
         n_skip = len(turns) - len(new_turns)
         n_new = len(new_turns)
         total_skipped += n_skip
 
         if not new_turns:
-            print(
-                f"Conversation {conv_idx + 1}/10 ({sample_id}): "
-                f"0 new turns, {n_skip} skipped"
-            )
+            print(f"Conversation {conv_idx + 1}/10 ({sample_id}): " f"0 new turns, {n_skip} skipped")
             continue
 
         # Embed and upsert in batches
         ingested_this_conv = 0
-        for batch_start in range(0, len(new_turns), BATCH_SIZE):
+        for batch_start in tqdm(
+            range(0, len(new_turns), BATCH_SIZE),
+            desc=f"Conv {conv_idx + 1}/10 ({sample_id})",
+            unit="batch",
+            leave=True,
+        ):
             batch = new_turns[batch_start : batch_start + BATCH_SIZE]
             batch_ids = [pid for pid, _ in batch]
             batch_turns = [turn for _, turn in batch]
             batch_texts = [turn["text"] for turn in batch_turns]
 
-            try:
-                vectors = embed_texts(openai_client, batch_texts)
-            except Exception as e:
-                print(
-                    f"  ERROR embedding batch {batch_start // BATCH_SIZE + 1} "
-                    f"for {sample_id}: {e}"
-                )
+            vectors: list[list[float]] | None = None
+            for attempt in range(3):
+                try:
+                    vectors = embed_texts(openai_client, batch_texts)
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        tqdm.write(f"  ERROR embedding batch after 3 attempts " f"for {sample_id}: {e}")
+                        vectors = None
+                        break
+                    wait = 2**attempt
+                    tqdm.write(f"  Retrying batch in {wait}s " f"(attempt {attempt + 1}/3): {e}")
+                    time.sleep(wait)
+
+            if vectors is None:
                 continue
 
             points = [
@@ -225,18 +230,13 @@ def main() -> None:
             try:
                 qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
                 ingested_this_conv += len(points)
+                time.sleep(1)  # avoid overwhelming the connection
             except Exception as e:
-                print(
-                    f"  ERROR upserting batch {batch_start // BATCH_SIZE + 1} "
-                    f"for {sample_id}: {e}"
-                )
+                tqdm.write(f"  ERROR upserting batch {batch_start // BATCH_SIZE + 1} " f"for {sample_id}: {e}")
                 continue
 
         total_ingested += ingested_this_conv
-        print(
-            f"Conversation {conv_idx + 1}/10 ({sample_id}): "
-            f"{ingested_this_conv} new turns, {n_skip} skipped"
-        )
+        print(f"Conversation {conv_idx + 1}/10 ({sample_id}): " f"{ingested_this_conv} new turns, {n_skip} skipped")
 
     # Final summary
     print("\n── Summary ────────────────────────────────────────")
