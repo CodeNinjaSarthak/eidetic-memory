@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { addMemory } from "@/lib/api";
 import type { MemoryResponse } from "@/lib/api";
@@ -16,6 +16,29 @@ export default function IngestPage() {
   const [extractedFacts, setExtractedFacts] = useState<MemoryResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState("Analyzing conversation...");
+
+  const STEP_MESSAGES = [
+    "Analyzing conversation...",
+    "Extracting memory candidates...",
+    "Resolving conflicts with existing memories...",
+    "Storing facts...",
+  ];
+
+  useEffect(() => {
+    if (!loading) {
+      setCurrentStep(STEP_MESSAGES[0]);
+      return;
+    }
+
+    let stepIndex = 0;
+    const interval = setInterval(() => {
+      stepIndex = (stepIndex + 1) % STEP_MESSAGES.length;
+      setCurrentStep(STEP_MESSAGES[stepIndex]);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const handleSubmit = async () => {
     if (!userId.trim() || !sessionId.trim() || !previousContent.trim() || !currentContent.trim()) {
@@ -142,7 +165,7 @@ export default function IngestPage() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              Extracting...
+              {currentStep}
             </span>
           ) : (
             "Extract Memories"
@@ -155,6 +178,22 @@ export default function IngestPage() {
           </div>
         )}
       </div>
+
+      {/* Skeleton Loading Cards */}
+      {loading && (
+        <div className="mt-8 space-y-4">
+          <p className="text-text-secondary text-sm">Processing...</p>
+          {[0, 1].map((i) => (
+            <div
+              key={i}
+              className="bg-bg-surface border-l-2 border-accent-teal rounded-lg p-4"
+            >
+              <div className="animate-shimmer h-4 rounded w-3/4 mb-3" />
+              <div className="animate-shimmer h-3 rounded w-1/3" />
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Section 2 — Extracted Facts */}
       {extractedFacts.length > 0 && (
