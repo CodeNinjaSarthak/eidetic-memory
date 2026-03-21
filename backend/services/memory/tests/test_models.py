@@ -97,9 +97,7 @@ def test_conversation_pair_rejects_messages_from_different_sessions() -> None:
 
 
 def test_conversation_pair_accepts_messages_from_same_session() -> None:
-    user_message = Message(
-        user_id="u1", session_id="s1", role="user", content="hello"
-    )
+    user_message = Message(user_id="u1", session_id="s1", role="user", content="hello")
     assistant_message = Message(
         user_id="u1", session_id="s1", role="assistant", content="hi"
     )
@@ -111,9 +109,7 @@ def test_conversation_pair_accepts_messages_from_same_session() -> None:
 
 
 def test_message_generates_id_and_timestamp_by_default() -> None:
-    msg = Message(
-        user_id="u1", session_id="s1", role="user", content="hi"
-    )
+    msg = Message(user_id="u1", session_id="s1", role="user", content="hi")
 
     assert msg.id
     assert isinstance(msg.timestamp, datetime)

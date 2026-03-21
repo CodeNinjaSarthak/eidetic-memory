@@ -1,5 +1,7 @@
 """Memory-augmented chat endpoint."""
 
+import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -12,6 +14,8 @@ from memory.models.conversation import ConversationPair, Message
 from retrieval.context import ContextBuilder
 from retrieval.retriever import MemoryRetriever
 from storage.models import MemoryFact
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -36,8 +40,12 @@ async def chat(
     llm_service: Annotated[AbstractLLMService, Depends(get_llm_service)],
 ) -> ChatResponse:
     """Run a memory-augmented chat turn."""
-    memories = await retriever.retrieve(
-        query=payload.message, user_id=payload.user_id
+    t_start = time.perf_counter()
+
+    t0 = time.perf_counter()
+    memories = await retriever.retrieve(query=payload.message, user_id=payload.user_id)
+    logger.info(
+        "step=retrieve time=%.3fs memories=%d", time.perf_counter() - t0, len(memories)
     )
 
     system_prompt = ContextBuilder().build_system_prompt(
@@ -45,10 +53,12 @@ async def chat(
         memories=memories,
     )
 
+    t0 = time.perf_counter()
     reply = await llm_service.complete(
         messages=[{"role": "user", "content": payload.message}],
         system=system_prompt,
     )
+    logger.info("step=llm_complete time=%.3fs", time.perf_counter() - t0)
 
     previous = Message(
         user_id=payload.user_id,
@@ -64,8 +74,14 @@ async def chat(
     )
     pair = ConversationPair(current=current, previous=previous)
 
+    t0 = time.perf_counter()
     facts = await manager.add_memory(
         pair=pair, user_id=payload.user_id, session_id=payload.session_id
     )
+    logger.info(
+        "step=add_memory time=%.3fs facts=%d", time.perf_counter() - t0, len(facts)
+    )
+
+    logger.info("step=chat_total time=%.3fs", time.perf_counter() - t_start)
 
     return ChatResponse(reply=reply, facts_added=[_to_response(f) for f in facts])

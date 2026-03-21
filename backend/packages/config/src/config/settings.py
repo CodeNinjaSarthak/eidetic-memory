@@ -63,7 +63,9 @@ class Settings(BaseSettings):
     def _validate_provider_credentials(self) -> "Settings":
         """Ensure the selected LLM provider has required credentials."""
         if self.llm_provider == "claude" and not self.anthropic_api_key:
-            raise ValueError("anthropic_api_key is required when llm_provider is 'claude'")
+            raise ValueError(
+                "anthropic_api_key is required when llm_provider is 'claude'"
+            )
 
         if self.llm_provider == "gemini" and not self.google_api_key:
             raise ValueError("google_api_key is required when llm_provider is 'gemini'")

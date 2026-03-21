@@ -4,12 +4,13 @@ Wires together extraction, evolution, embedding, and storage
 into a single entry point for adding and searching memories.
 """
 
+import asyncio
 import logging
 
 from llm.embeddings.base import AbstractEmbeddingService
 from llm.generation.base import AbstractLLMService
 from memory.models.conversation import ConversationPair, Message
-from memory.models.memory import MemoryFact, MemoryOperation
+from memory.models.memory import MemoryFact, MemoryOperation, MemoryUpdate
 from memory.pipeline.extraction import ExtractionPipeline
 from memory.pipeline.update import EvolutionEngine
 from storage.base import AbstractMemoryStore
@@ -46,6 +47,29 @@ class MemoryManager:
         self._evolution = EvolutionEngine(llm_service)
         self._similarity_top_k = similarity_top_k
 
+    async def _decide_candidate(
+        self,
+        candidate: str,
+        user_id: str,
+    ) -> tuple[str, list[float], MemoryUpdate]:
+        """Embed, search, and evolve a single candidate fact.
+
+        Args:
+            candidate: The candidate fact text.
+            user_id: The user who owns these memories.
+
+        Returns:
+            Tuple of (candidate text, embedding vector, evolution decision).
+        """
+        embedding = await self._embedding_service.embed(candidate)
+        similar = await self._store.search(
+            user_id=user_id,
+            query_embedding=embedding,
+            top_k=self._similarity_top_k,
+        )
+        update = await self._evolution.decide(candidate, similar)
+        return candidate, embedding, update
+
     async def add_memory(
         self,
         pair: ConversationPair,
@@ -73,19 +97,13 @@ class MemoryManager:
         if not candidates:
             return []
 
+        decisions = await asyncio.gather(
+            *[self._decide_candidate(c, user_id) for c in candidates]
+        )
+
         results: list[MemoryFact] = []
 
-        for candidate in candidates:
-            embedding = await self._embedding_service.embed(candidate)
-
-            similar = await self._store.search(
-                user_id=user_id,
-                query_embedding=embedding,
-                top_k=self._similarity_top_k,
-            )
-
-            update = await self._evolution.decide(candidate, similar)
-
+        for candidate, embedding, update in decisions:
             if update.operation == MemoryOperation.ADD:
                 fact = MemoryFact(
                     user_id=user_id,
@@ -104,7 +122,9 @@ class MemoryManager:
                     )
                     continue
                 existing.update_content(update.updated_content)
-                existing.embedding = await self._embedding_service.embed(update.updated_content)
+                existing.embedding = await self._embedding_service.embed(
+                    update.updated_content
+                )
                 await self._store.upsert(existing)
                 results.append(existing)
 

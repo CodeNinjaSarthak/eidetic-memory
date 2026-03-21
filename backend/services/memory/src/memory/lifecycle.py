@@ -82,9 +82,7 @@ class LifecycleManager:
                 await self._store.delete(fact.id, user_id)
                 deleted_ids.append(fact.id)
 
-        logger.info(
-            "Pruned %d memories for user %s", len(deleted_ids), user_id
-        )
+        logger.info("Pruned %d memories for user %s", len(deleted_ids), user_id)
         return deleted_ids
 
     async def record_access(self, memory_id: str, user_id: str) -> MemoryFact | None:

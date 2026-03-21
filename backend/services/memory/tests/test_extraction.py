@@ -13,9 +13,7 @@ class AbstractLLMService(ABC):
     """Minimal local stub matching the AbstractLLMService interface."""
 
     @abstractmethod
-    async def complete(
-        self, messages: list[dict[str, str]], system: str
-    ) -> str: ...
+    async def complete(self, messages: list[dict[str, str]], system: str) -> str: ...
 
     @abstractmethod
     async def complete_with_tool(

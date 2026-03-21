@@ -88,12 +88,16 @@ async def test_complete_with_tool_returns_parsed_tool_call_arguments() -> None:
     call_kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["tools"][0]["type"] == "function"
     assert call_kwargs["tools"][0]["function"]["name"] == "extract"
-    assert call_kwargs["tools"][0]["function"]["parameters"] == SAMPLE_TOOL["input_schema"]
+    assert (
+        call_kwargs["tools"][0]["function"]["parameters"] == SAMPLE_TOOL["input_schema"]
+    )
     assert result == {"facts": ["likes coffee"]}
 
 
 @pytest.mark.asyncio
-async def test_complete_with_tool_raises_llm_error_when_response_has_no_tool_calls() -> None:
+async def test_complete_with_tool_raises_llm_error_when_response_has_no_tool_calls() -> (
+    None
+):
     mock_client = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(
         return_value=_mock_completion_response("no tools here")

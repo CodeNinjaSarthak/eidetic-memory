@@ -29,12 +29,16 @@ def test_settings_accepts_minimum_valid_configuration():
 
 def test_settings_rejects_claude_provider_without_api_key():
     with pytest.raises(ValidationError, match="anthropic_api_key"):
-        Settings(_env_file=None, qdrant_url="http://localhost:6333", llm_provider="claude")
+        Settings(
+            _env_file=None, qdrant_url="http://localhost:6333", llm_provider="claude"
+        )
 
 
 def test_settings_rejects_gemini_provider_without_api_key():
     with pytest.raises(ValidationError, match="google_api_key"):
-        Settings(_env_file=None, qdrant_url="http://localhost:6333", llm_provider="gemini")
+        Settings(
+            _env_file=None, qdrant_url="http://localhost:6333", llm_provider="gemini"
+        )
 
 
 def test_settings_rejects_azure_provider_with_partial_credentials():
@@ -49,7 +53,9 @@ def test_settings_rejects_azure_provider_with_partial_credentials():
 
 def test_settings_rejects_invalid_llm_provider():
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, qdrant_url="http://localhost:6333", llm_provider="openai")
+        Settings(
+            _env_file=None, qdrant_url="http://localhost:6333", llm_provider="openai"
+        )
 
 
 def test_settings_rejects_non_positive_embedding_dimension():

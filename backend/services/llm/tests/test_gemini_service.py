@@ -109,7 +109,9 @@ async def test_complete_with_tool_returns_function_call_arguments_as_dict() -> N
 
 
 @pytest.mark.asyncio
-async def test_complete_with_tool_raises_llm_error_when_response_has_no_function_call() -> None:
+async def test_complete_with_tool_raises_llm_error_when_response_has_no_function_call() -> (
+    None
+):
     mock_client = MagicMock()
     mock_client.aio.models.generate_content = AsyncMock(
         return_value=_mock_no_function_call_response()

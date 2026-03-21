@@ -71,8 +71,7 @@ class OpenAIEmbeddingService(AbstractEmbeddingService):
                 model=self._model,
             )
             return [
-                item.embedding
-                for item in sorted(response.data, key=lambda x: x.index)
+                item.embedding for item in sorted(response.data, key=lambda x: x.index)
             ]
         except Exception as e:
             raise EmbeddingError(f"Failed to embed batch: {e}") from e

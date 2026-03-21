@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 class QdrantMemoryStore(AbstractMemoryStore):
     """Memory store backed by a Qdrant vector database."""
 
+    _initialized: bool = False
+
     def __init__(
         self,
         url: str,
@@ -44,13 +46,17 @@ class QdrantMemoryStore(AbstractMemoryStore):
         """Construct a QdrantMemoryStore from application settings."""
         return cls(
             url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+            api_key=settings.qdrant_api_key.get_secret_value()
+            if settings.qdrant_api_key
+            else None,
             collection_name=settings.qdrant_collection_name,
             embedding_dimension=settings.embedding_dimension,
         )
 
     async def _ensure_collection(self) -> None:
         """Create the collection if it does not already exist."""
+        if QdrantMemoryStore._initialized:
+            return
         collections = await self._client.get_collections()
         existing = {c.name for c in collections.collections}
         if self._collection_name not in existing:
@@ -67,6 +73,7 @@ class QdrantMemoryStore(AbstractMemoryStore):
             field_name="user_id",
             field_schema="keyword",
         )
+        QdrantMemoryStore._initialized = True
 
     async def upsert(self, fact: MemoryFact) -> None:
         """Insert or update a memory fact in Qdrant."""
@@ -134,9 +141,7 @@ class QdrantMemoryStore(AbstractMemoryStore):
                 collection_name=self._collection_name,
                 scroll_filter=Filter(
                     must=[
-                        FieldCondition(
-                            key="user_id", match=MatchValue(value=user_id)
-                        )
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id))
                     ]
                 ),
                 offset=offset,

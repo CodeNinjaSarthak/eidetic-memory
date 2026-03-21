@@ -129,9 +129,4 @@ def test_build_system_prompt_appends_context_with_blank_line_separator():
 
     result = builder.build_system_prompt("You are a helpful assistant.", facts)
 
-    assert result == (
-        "You are a helpful assistant.\n"
-        "\n"
-        "## Memories\n"
-        "- lives in NYC"
-    )
+    assert result == ("You are a helpful assistant.\n\n## Memories\n- lives in NYC")

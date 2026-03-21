@@ -79,9 +79,7 @@ async def test_embed_includes_correct_model_in_sdk_call() -> None:
 @pytest.mark.asyncio
 async def test_embed_raises_embedding_error_when_sdk_fails() -> None:
     mock_client = MagicMock()
-    mock_client.aio.models.embed_content = AsyncMock(
-        side_effect=Exception("sdk error")
-    )
+    mock_client.aio.models.embed_content = AsyncMock(side_effect=Exception("sdk error"))
     service = _make_gemini_embedding_service(mock_client)
 
     with pytest.raises(EmbeddingError, match="Failed to embed text"):

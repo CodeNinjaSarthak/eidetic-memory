@@ -29,7 +29,11 @@ class ContextBuilder:
         if not memories:
             return ""
 
-        truncated = memories[: self._max_memories] if self._max_memories is not None else memories
+        truncated = (
+            memories[: self._max_memories]
+            if self._max_memories is not None
+            else memories
+        )
 
         if len(truncated) < len(memories):
             logger.debug(
@@ -45,9 +49,7 @@ class ContextBuilder:
 
         return "\n".join(lines)
 
-    def build_system_prompt(
-        self, base_prompt: str, memories: list[MemoryFact]
-    ) -> str:
+    def build_system_prompt(self, base_prompt: str, memories: list[MemoryFact]) -> str:
         """Append formatted memory context to a base system prompt.
 
         Returns base_prompt unchanged when no memories are provided.
