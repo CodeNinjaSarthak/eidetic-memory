@@ -49,6 +49,7 @@ class GeminiEmbeddingService(AbstractEmbeddingService):
             response = await self._client.aio.models.embed_content(
                 model=self._model,
                 contents=text,
+                config={"output_dimensionality": 768},
             )
             values = response.embeddings[0].values
 
