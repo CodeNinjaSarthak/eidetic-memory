@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 const links = [
   { href: "/memories", label: "Memory Browser" },
-  { href: "/ingest", label: "Ingest" },
+  { href: "/chat", label: "Chat" },
 ] as const;
 
 export default function NavBar() {
