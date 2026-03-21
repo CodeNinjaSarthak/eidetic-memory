@@ -1,4 +1,4 @@
-.PHONY: install sync lint format test run dev
+.PHONY: install sync lint format test run dev frontend-install frontend-dev frontend-build
 
 install:
 	uv sync --all-packages
@@ -26,3 +26,12 @@ dev:
 
 check:
 	uv run ruff check . && uv run pytest
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build

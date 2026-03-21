@@ -86,8 +86,8 @@ def test_memory_pipeline_defaults_are_correct():
 def test_embedding_defaults_are_correct():
     settings = Settings(**_MINIMUM_VALID)
 
-    assert settings.embedding_dimension == 1536
-    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.embedding_dimension == 768
+    assert settings.embedding_model == "gemini-embedding-exp-03-07"
 
 
 def test_settings_rejects_invalid_api_env():
