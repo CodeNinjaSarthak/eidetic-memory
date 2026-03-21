@@ -94,13 +94,15 @@ function MemoryBrowserContent() {
                 placeholder="Enter user ID"
                 className="flex-1 bg-bg-elevated border border-border text-text-primary rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent-teal"
               />
-              <button
-                onClick={() => loadMemories(userId)}
-                disabled={loading}
-                className="bg-accent-teal hover:bg-accent-teal/80 disabled:opacity-50 text-bg-base px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                Load
-              </button>
+              {!isSearchMode && (
+                <button
+                  onClick={() => loadMemories(userId)}
+                  disabled={loading}
+                  className="bg-accent-teal hover:bg-accent-teal/80 disabled:opacity-50 text-bg-base px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Load
+                </button>
+              )}
             </div>
           </div>
 
@@ -161,6 +163,29 @@ function MemoryBrowserContent() {
             <p className="text-text-secondary text-center py-12">No memories found for this user</p>
           )}
 
+          {isSearchMode && memories.length > 0 && (
+            <p className="text-text-secondary text-xs text-right">
+              {memories.length} results
+            </p>
+          )}
+
+          {isSearchMode && (
+            <div className="border-l-2 border-accent-teal bg-bg-elevated rounded-lg px-4 py-3 flex items-center justify-between mb-2">
+              <span className="text-text-secondary text-sm">
+                Showing results for: <span className="font-mono text-text-mono">&ldquo;{searchQuery}&rdquo;</span>
+              </span>
+              <button
+                onClick={() => {
+                  setIsSearchMode(false);
+                  loadMemories(userId);
+                }}
+                className="text-accent-teal text-sm hover:text-accent-teal/70 transition-colors"
+              >
+                &larr; Show All
+              </button>
+            </div>
+          )}
+
           {memories.map((memory, index) => (
             <div
               key={memory.id}
@@ -173,6 +198,9 @@ function MemoryBrowserContent() {
                   {formatRelativeTime(memory.created_at)}
                 </span>
                 <div className="flex items-center gap-3">
+                  {isSearchMode && (
+                    <span className="text-accent-amber/60 text-xs font-mono">#{index + 1}</span>
+                  )}
                   {memory.importance_score !== null && (
                     <span className="bg-accent-amber/20 text-accent-amber rounded-lg px-2 py-0.5 text-xs">
                       {memory.importance_score.toFixed(2)}
