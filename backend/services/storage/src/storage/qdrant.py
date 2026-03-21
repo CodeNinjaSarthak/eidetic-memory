@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 class QdrantMemoryStore(AbstractMemoryStore):
     """Memory store backed by a Qdrant vector database."""
 
+    _initialized: bool = False
+
     def __init__(
         self,
         url: str,
@@ -53,6 +55,8 @@ class QdrantMemoryStore(AbstractMemoryStore):
 
     async def _ensure_collection(self) -> None:
         """Create the collection if it does not already exist."""
+        if QdrantMemoryStore._initialized:
+            return
         collections = await self._client.get_collections()
         existing = {c.name for c in collections.collections}
         if self._collection_name not in existing:
@@ -69,6 +73,7 @@ class QdrantMemoryStore(AbstractMemoryStore):
             field_name="user_id",
             field_schema="keyword",
         )
+        QdrantMemoryStore._initialized = True
 
     async def upsert(self, fact: MemoryFact) -> None:
         """Insert or update a memory fact in Qdrant."""
