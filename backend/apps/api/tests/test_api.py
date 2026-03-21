@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from api.dependencies import get_memory_manager, get_memory_retriever
+from api.dependencies import get_llm_service, get_memory_manager, get_memory_retriever
 from api.main import app
 from httpx import ASGITransport, AsyncClient
 
@@ -32,6 +32,16 @@ class FakeMemoryManager:
         ]
 
 
+class FakeLLMService:
+    """Stub that returns a canned reply from complete."""
+
+    async def complete(self, messages: list, system: str = "") -> str:
+        return "I remember you enjoy jazz. How can I help?"
+
+    async def complete_with_tool(self, messages: list, tool: dict, system: str = "") -> dict:
+        return {}
+
+
 class FakeMemoryRetriever:
     """Stub that returns a canned MemoryFact from retrieve."""
 
@@ -57,6 +67,7 @@ def client():
     """Async test client with fake dependencies injected."""
     app.dependency_overrides[get_memory_manager] = lambda: FakeMemoryManager()
     app.dependency_overrides[get_memory_retriever] = lambda: FakeMemoryRetriever()
+    app.dependency_overrides[get_llm_service] = lambda: FakeLLMService()
     yield AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -132,3 +143,40 @@ async def test_search_memories_response_contains_memory_content(client: AsyncCli
 
     memory = response.json()["memories"][0]
     assert memory["content"] == "User works at Acme Corp"
+
+
+CHAT_BODY = {
+    "user_id": "u1",
+    "session_id": "s1",
+    "message": "What kind of music do I like?",
+}
+
+
+@pytest.mark.asyncio
+async def test_chat_returns_200_with_reply_and_facts(client: AsyncClient):
+    response = await client.post("/chat/", json=CHAT_BODY)
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["reply"], str)
+    assert isinstance(response.json()["facts_added"], list)
+
+
+@pytest.mark.asyncio
+async def test_chat_reply_comes_from_llm_service(client: AsyncClient):
+    response = await client.post("/chat/", json=CHAT_BODY)
+
+    assert response.json()["reply"] == "I remember you enjoy jazz. How can I help?"
+
+
+@pytest.mark.asyncio
+async def test_chat_facts_added_contains_stored_memories(client: AsyncClient):
+    response = await client.post("/chat/", json=CHAT_BODY)
+
+    assert response.json()["facts_added"][0]["content"] == "User likes jazz"
+
+
+@pytest.mark.asyncio
+async def test_chat_requires_all_fields(client: AsyncClient):
+    response = await client.post("/chat/", json={"user_id": "u1", "session_id": "s1"})
+
+    assert response.status_code == 422

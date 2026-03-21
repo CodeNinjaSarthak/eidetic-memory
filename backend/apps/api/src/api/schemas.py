@@ -60,3 +60,18 @@ class DeleteResponse(BaseModel):
 
     deleted: bool
     memory_id: str
+
+
+class ChatRequest(BaseModel):
+    """Request body for a memory-augmented chat turn."""
+
+    user_id: str
+    session_id: str
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """Response body for a chat turn."""
+
+    reply: str
+    facts_added: list[MemoryResponse]
