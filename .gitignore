@@ -46,4 +46,5 @@ apps/web/.env.local
 eval/data/*.json
 
 .claude
-Claude.md
+Claude.mdfrontend/.next/
+frontend/node_modules/
