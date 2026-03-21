@@ -87,3 +87,10 @@ def get_memory_retriever(
         embedding_service=embedding_service,
         top_k=settings.similarity_top_k,
     )
+
+
+def get_llm_service(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AbstractLLMService:
+    """Build the LLM service for the configured provider."""
+    return _build_llm_service(settings)

@@ -91,6 +91,26 @@ export async function searchMemories(
   return response.memories;
 }
 
+export interface ChatRequest {
+  user_id: string;
+  session_id: string;
+  message: string;
+}
+
+export interface ChatResponse {
+  reply: string;
+  facts_added: MemoryResponse[];
+}
+
+export async function sendChatMessage(
+  request: ChatRequest,
+): Promise<ChatResponse> {
+  return apiFetch<ChatResponse>("/chat/", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
 export async function deleteMemory(
   memoryId: string,
   userId: string,
