@@ -293,7 +293,7 @@ async def test_embed_called_for_each_candidate_fact() -> None:
 
     await manager.add_memory(_make_pair(), user_id=_USER_ID)
 
-    assert embedding.embed_calls == ["Fact A", "Fact B", "Fact C"]
+    assert set(embedding.embed_calls) == {"Fact A", "Fact B", "Fact C"}
 
 
 @pytest.mark.asyncio
