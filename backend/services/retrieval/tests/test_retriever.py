@@ -94,7 +94,9 @@ async def test_retrieve_returns_facts_from_store():
     facts = [_make_fact("likes coffee"), _make_fact("works at Acme")]
     store = FakeMemoryStore(facts=facts)
     embedder = FakeEmbeddingService()
-    retriever = MemoryRetriever(store=store, embedding_service=embedder, rerank_by_importance=False)
+    retriever = MemoryRetriever(
+        store=store, embedding_service=embedder, rerank_by_importance=False
+    )
 
     results = await retriever.retrieve(query="tell me about the user", user_id="u1")
 

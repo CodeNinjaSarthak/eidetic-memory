@@ -13,9 +13,7 @@ class AbstractLLMService(ABC):
     """Minimal local stub matching the AbstractLLMService interface."""
 
     @abstractmethod
-    async def complete(
-        self, messages: list[dict[str, str]], system: str
-    ) -> str: ...
+    async def complete(self, messages: list[dict[str, str]], system: str) -> str: ...
 
     @abstractmethod
     async def complete_with_tool(
@@ -157,7 +155,9 @@ async def test_evolution_engine_falls_back_to_noop_when_operation_missing() -> N
 
 
 @pytest.mark.asyncio
-async def test_evolution_engine_falls_back_to_noop_when_update_missing_memory_id() -> None:
+async def test_evolution_engine_falls_back_to_noop_when_update_missing_memory_id() -> (
+    None
+):
     service = FakeLLMService(
         tool_response={"operation": "UPDATE", "updated_content": "User likes tea"}
     )
@@ -169,7 +169,9 @@ async def test_evolution_engine_falls_back_to_noop_when_update_missing_memory_id
 
 
 @pytest.mark.asyncio
-async def test_evolution_engine_falls_back_to_noop_when_delete_missing_memory_id() -> None:
+async def test_evolution_engine_falls_back_to_noop_when_delete_missing_memory_id() -> (
+    None
+):
     service = FakeLLMService(tool_response={"operation": "DELETE"})
     engine = EvolutionEngine(llm_service=service)
 
@@ -179,7 +181,9 @@ async def test_evolution_engine_falls_back_to_noop_when_delete_missing_memory_id
 
 
 @pytest.mark.asyncio
-async def test_evolution_engine_falls_back_to_noop_when_update_missing_content() -> None:
+async def test_evolution_engine_falls_back_to_noop_when_update_missing_content() -> (
+    None
+):
     service = FakeLLMService(
         tool_response={"operation": "UPDATE", "memory_id": "fact-1"}
     )

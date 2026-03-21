@@ -34,9 +34,7 @@ class GeminiService(AbstractLLMService):
         self._client = genai.Client(api_key=resolved_key)
         self._model = model
 
-    def _convert_messages(
-        self, messages: list[dict[str, str]]
-    ) -> list[types.Content]:
+    def _convert_messages(self, messages: list[dict[str, str]]) -> list[types.Content]:
         """Convert message dicts to Gemini Content objects.
 
         Gemini uses "model" instead of "assistant" for the model's role.
@@ -50,7 +48,9 @@ class GeminiService(AbstractLLMService):
         contents: list[types.Content] = []
         for msg in messages:
             role = "model" if msg["role"] == "assistant" else msg["role"]
-            contents.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
+            contents.append(
+                types.Content(role=role, parts=[types.Part(text=msg["content"])])
+            )
         return contents
 
     async def complete(self, messages: list[dict[str, str]], system: str = "") -> str:

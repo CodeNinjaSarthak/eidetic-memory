@@ -222,9 +222,7 @@ async def test_prune_respects_max_memories_limit() -> None:
         )
     manager, _ = _build_manager(store=store)
 
-    deleted = await manager.prune_memories(
-        _USER_ID, min_importance=0.0, max_memories=2
-    )
+    deleted = await manager.prune_memories(_USER_ID, min_importance=0.0, max_memories=2)
 
     assert len(store.facts) <= 2
     assert len(deleted) >= 3

@@ -44,7 +44,9 @@ class QdrantMemoryStore(AbstractMemoryStore):
         """Construct a QdrantMemoryStore from application settings."""
         return cls(
             url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
+            api_key=settings.qdrant_api_key.get_secret_value()
+            if settings.qdrant_api_key
+            else None,
             collection_name=settings.qdrant_collection_name,
             embedding_dimension=settings.embedding_dimension,
         )
@@ -134,9 +136,7 @@ class QdrantMemoryStore(AbstractMemoryStore):
                 collection_name=self._collection_name,
                 scroll_filter=Filter(
                     must=[
-                        FieldCondition(
-                            key="user_id", match=MatchValue(value=user_id)
-                        )
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id))
                     ]
                 ),
                 offset=offset,

@@ -1,10 +1,14 @@
 """FastAPI application entry point."""
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers.chat import router as chat_router
 from api.routers.memories import router as memories_router
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Eidetic Memory API", version="0.1.0")
 

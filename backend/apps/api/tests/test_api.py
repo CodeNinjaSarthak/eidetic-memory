@@ -38,7 +38,9 @@ class FakeLLMService:
     async def complete(self, messages: list, system: str = "") -> str:
         return "I remember you enjoy jazz. How can I help?"
 
-    async def complete_with_tool(self, messages: list, tool: dict, system: str = "") -> dict:
+    async def complete_with_tool(
+        self, messages: list, tool: dict, system: str = ""
+    ) -> dict:
         return {}
 
 

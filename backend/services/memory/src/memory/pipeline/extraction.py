@@ -49,9 +49,7 @@ def _build_user_content(
         sections.append(f"Conversation Summary:\n{conversation_summary}")
 
     if recent_messages:
-        formatted = "\n".join(
-            f"{msg.role}: {msg.content}" for msg in recent_messages
-        )
+        formatted = "\n".join(f"{msg.role}: {msg.content}" for msg in recent_messages)
         sections.append(f"Recent Messages:\n{formatted}")
 
     sections.append(

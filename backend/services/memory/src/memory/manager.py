@@ -104,7 +104,9 @@ class MemoryManager:
                     )
                     continue
                 existing.update_content(update.updated_content)
-                existing.embedding = await self._embedding_service.embed(update.updated_content)
+                existing.embedding = await self._embedding_service.embed(
+                    update.updated_content
+                )
                 await self._store.upsert(existing)
                 results.append(existing)
 

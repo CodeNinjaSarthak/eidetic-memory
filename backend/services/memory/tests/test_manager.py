@@ -18,9 +18,7 @@ class AbstractLLMService(ABC):
     """Minimal local stub matching the AbstractLLMService interface."""
 
     @abstractmethod
-    async def complete(
-        self, messages: list[dict[str, str]], system: str
-    ) -> str: ...
+    async def complete(self, messages: list[dict[str, str]], system: str) -> str: ...
 
     @abstractmethod
     async def complete_with_tool(
@@ -180,9 +178,7 @@ def _build_manager(
     """Construct a MemoryManager with fakes, returning all components."""
     emb = embedding or FakeEmbeddingService()
     st = store or FakeMemoryStore()
-    manager = MemoryManager(
-        store=st, embedding_service=emb, llm_service=llm
-    )
+    manager = MemoryManager(store=st, embedding_service=emb, llm_service=llm)
     return manager, emb, st
 
 
@@ -247,9 +243,7 @@ async def test_update_operation_changes_existing_fact_content() -> None:
 @pytest.mark.asyncio
 async def test_delete_operation_removes_fact_from_store() -> None:
     store = FakeMemoryStore()
-    existing = MemoryFact(
-        id="fact-99", user_id=_USER_ID, content="User is vegetarian"
-    )
+    existing = MemoryFact(id="fact-99", user_id=_USER_ID, content="User is vegetarian")
     store._facts["fact-99"] = existing
     store.search_results = [existing]
 
@@ -352,11 +346,13 @@ async def test_update_operation_embeds_updated_content_not_candidate() -> None:
     embedding = FakeEmbeddingService()
     llm = FakeLLMService(
         extraction_response={"facts": ["User now works at Google"]},
-        evolution_responses=[{
-            "operation": "UPDATE",
-            "memory_id": "fact-1",
-            "updated_content": "User works at Google",
-        }],
+        evolution_responses=[
+            {
+                "operation": "UPDATE",
+                "memory_id": "fact-1",
+                "updated_content": "User works at Google",
+            }
+        ],
     )
     manager, _, _ = _build_manager(llm, embedding=embedding, store=store)
 
