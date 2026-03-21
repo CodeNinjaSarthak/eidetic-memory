@@ -49,48 +49,64 @@ def _build_llm_service(settings: Settings) -> AbstractLLMService:
             )
 
 
+_memory_manager: MemoryManager | None = None
+
+
 def get_memory_manager(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> MemoryManager:
-    """Build a MemoryManager wired to real services."""
-    store = QdrantMemoryStore.from_settings(settings)
-    embedding_service = GeminiEmbeddingService(
-        api_key=settings.google_api_key.get_secret_value()
-        if settings.google_api_key
-        else None,
-        model=settings.embedding_model,
-    )
-    llm_service = _build_llm_service(settings)
+    """Return a cached MemoryManager wired to real services."""
+    global _memory_manager
+    if _memory_manager is None:
+        store = QdrantMemoryStore.from_settings(settings)
+        embedding_service = GeminiEmbeddingService(
+            api_key=settings.google_api_key.get_secret_value()
+            if settings.google_api_key
+            else None,
+            model=settings.embedding_model,
+        )
+        llm_service = _build_llm_service(settings)
+        _memory_manager = MemoryManager(
+            store=store,
+            embedding_service=embedding_service,
+            llm_service=llm_service,
+            similarity_top_k=settings.similarity_top_k,
+        )
+    return _memory_manager
 
-    return MemoryManager(
-        store=store,
-        embedding_service=embedding_service,
-        llm_service=llm_service,
-        similarity_top_k=settings.similarity_top_k,
-    )
+
+_memory_retriever: MemoryRetriever | None = None
 
 
 def get_memory_retriever(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> MemoryRetriever:
-    """Build a MemoryRetriever wired to real services."""
-    store = QdrantMemoryStore.from_settings(settings)
-    embedding_service = GeminiEmbeddingService(
-        api_key=settings.google_api_key.get_secret_value()
-        if settings.google_api_key
-        else None,
-        model=settings.embedding_model,
-    )
+    """Return a cached MemoryRetriever wired to real services."""
+    global _memory_retriever
+    if _memory_retriever is None:
+        store = QdrantMemoryStore.from_settings(settings)
+        embedding_service = GeminiEmbeddingService(
+            api_key=settings.google_api_key.get_secret_value()
+            if settings.google_api_key
+            else None,
+            model=settings.embedding_model,
+        )
+        _memory_retriever = MemoryRetriever(
+            store=store,
+            embedding_service=embedding_service,
+            top_k=settings.similarity_top_k,
+        )
+    return _memory_retriever
 
-    return MemoryRetriever(
-        store=store,
-        embedding_service=embedding_service,
-        top_k=settings.similarity_top_k,
-    )
+
+_llm_service: AbstractLLMService | None = None
 
 
 def get_llm_service(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AbstractLLMService:
-    """Build the LLM service for the configured provider."""
-    return _build_llm_service(settings)
+    """Return a cached LLM service for the configured provider."""
+    global _llm_service
+    if _llm_service is None:
+        _llm_service = _build_llm_service(settings)
+    return _llm_service
