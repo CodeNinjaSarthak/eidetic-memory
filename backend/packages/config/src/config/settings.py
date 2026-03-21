@@ -21,13 +21,16 @@ class Settings(BaseSettings):
     )
 
     # LLM Provider
-    llm_provider: Literal["claude", "gemini", "azure"] = "claude"
+    llm_provider: Literal["claude", "gemini", "azure", "groq"] = "claude"
 
     # Claude
     anthropic_api_key: SecretStr | None = None
 
     # Gemini
     google_api_key: SecretStr | None = None
+
+    # Groq
+    groq_api_key: SecretStr | None = None
 
     # Azure OpenAI
     azure_openai_api_key: SecretStr | None = None
@@ -40,11 +43,11 @@ class Settings(BaseSettings):
     qdrant_collection_name: str = "eidetic_memories"
 
     # Embedding model
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = Field(default=1536, gt=0)
+    embedding_model: str = "gemini-embedding-exp-03-07"
+    embedding_dimension: int = Field(default=768, gt=0)
 
     # Memory pipeline
-    memory_extraction_model: str = "claude-3-5-haiku-20241022"
+    memory_extraction_model: str = "gemini-2.0-flash"
     recency_window: int = Field(default=10, gt=0)
     similarity_top_k: int = Field(default=10, gt=0)
 
@@ -54,7 +57,7 @@ class Settings(BaseSettings):
     api_env: Literal["development", "production", "test"] = "development"
 
     # Eval
-    eval_llm_judge_model: str = "claude-3-5-sonnet-20241022"
+    eval_llm_judge_model: str = "gemini-2.0-flash"
 
     @model_validator(mode="after")
     def _validate_provider_credentials(self) -> "Settings":
@@ -81,5 +84,8 @@ class Settings(BaseSettings):
                     f"azure_openai_endpoint, azure_openai_deployment. "
                     f"Missing: {', '.join(missing)}"
                 )
+
+        if self.llm_provider == "groq" and not self.groq_api_key:
+            raise ValueError("groq_api_key is required when llm_provider is 'groq'")
 
         return self
