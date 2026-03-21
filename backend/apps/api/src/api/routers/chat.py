@@ -1,5 +1,6 @@
 """Memory-augmented chat endpoint."""
 
+import asyncio
 import logging
 import time
 from typing import Annotated
@@ -53,13 +54,6 @@ async def chat(
         memories=memories,
     )
 
-    t0 = time.perf_counter()
-    reply = await llm_service.complete(
-        messages=[{"role": "user", "content": payload.message}],
-        system=system_prompt,
-    )
-    logger.info("step=llm_complete time=%.3fs", time.perf_counter() - t0)
-
     previous = Message(
         user_id=payload.user_id,
         session_id=payload.session_id,
@@ -70,16 +64,22 @@ async def chat(
         user_id=payload.user_id,
         session_id=payload.session_id,
         role="assistant",
-        content=reply,
+        content="",
     )
     pair = ConversationPair(current=current, previous=previous)
 
     t0 = time.perf_counter()
-    facts = await manager.add_memory(
-        pair=pair, user_id=payload.user_id, session_id=payload.session_id
+    reply, facts = await asyncio.gather(
+        llm_service.complete(
+            messages=[{"role": "user", "content": payload.message}],
+            system=system_prompt,
+        ),
+        manager.add_memory(
+            pair=pair, user_id=payload.user_id, session_id=payload.session_id
+        ),
     )
     logger.info(
-        "step=add_memory time=%.3fs facts=%d", time.perf_counter() - t0, len(facts)
+        "step=reply_and_memory time=%.3fs facts=%d", time.perf_counter() - t0, len(facts)
     )
 
     logger.info("step=chat_total time=%.3fs", time.perf_counter() - t_start)
