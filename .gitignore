@@ -12,7 +12,6 @@ build/
 
 # uv
 .uv/
-uv.lock
 
 # Environment
 .env.development
