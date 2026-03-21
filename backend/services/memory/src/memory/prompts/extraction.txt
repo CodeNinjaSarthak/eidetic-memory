@@ -19,3 +19,5 @@ Guidelines:
 - Do not extract trivial or temporary information (e.g., "User said hello")
 - Do not make assumptions beyond what is stated
 - If no meaningful facts can be extracted, return an empty list
+- Do not extract facts that the assistant is reciting from previously stored memory context. Only extract facts that represent genuinely new information introduced in this conversation turn.
+- If the user asks a question (e.g. "what do I like?") and the assistant responds by listing known facts, treat that entire turn as containing no new information unless the user explicitly confirms, corrects, or adds to what the assistant said.
