@@ -47,3 +47,6 @@ eval/data/*.json
 .claude
 Claude.md
 eval/results/*.json
+frontend/.next/
+frontend/node_modules/
+
