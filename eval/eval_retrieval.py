@@ -13,12 +13,13 @@ Searches locomo_eval Qdrant collection.
 Reports Hit@1, Hit@3, Hit@5, Hit@10 by category.
 """
 
+import argparse
 import json
 import os
 import random
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,8 +30,6 @@ from tqdm import tqdm
 
 # ── Constants ────────────────────────────────────────────────
 COLLECTION_NAME = "locomo_eval"
-SAMPLE_SIZE = 10
-TOP_K = 10
 RANDOM_SEED = 42
 K_VALUES = [1, 3, 5, 10]
 CATEGORIES = {
@@ -89,6 +88,8 @@ def collect_qa_entries(dataset: list[dict]) -> list[dict]:
     for conversation_data in dataset:
         sample_id = conversation_data["sample_id"]
         for qa in conversation_data.get("qa", []):
+            if qa.get("category") == 5:
+                continue
             evidence = qa.get("evidence", [])
             if not evidence:
                 continue
@@ -105,7 +106,26 @@ def collect_qa_entries(dataset: list[dict]) -> list[dict]:
 
 
 # ── Main ─────────────────────────────────────────────────────
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Retrieval accuracy evaluation on LoCoMo dataset.")
+    parser.add_argument("--limit", type=int, default=10, help="Number of QA pairs to evaluate (default: 10)")
+    parser.add_argument("--top-k", type=int, default=10, help="Retrieval depth (default: 10)")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="eval/results/retrieval_results.json",
+        help="Path to save results JSON",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    sample_size = args.limit
+    top_k = args.top_k
+    output_path = Path(args.output)
+
     check_env()
 
     # Load dataset
@@ -118,7 +138,7 @@ def main() -> None:
     print(f"Total QA entries with evidence: {len(all_entries)}")
 
     random.seed(RANDOM_SEED)
-    sampled = random.sample(all_entries, min(SAMPLE_SIZE, len(all_entries)))
+    sampled = random.sample(all_entries, min(sample_size, len(all_entries)))
     print(f"Sampled {len(sampled)} questions (seed={RANDOM_SEED})")
 
     # Unique conversations in sample
@@ -164,7 +184,7 @@ def main() -> None:
                         )
                     ]
                 ),
-                limit=TOP_K,
+                limit=top_k,
                 with_payload=True,
                 with_vectors=False,
             )
@@ -238,16 +258,14 @@ def main() -> None:
         print(f"  {label:<14} {cat['hit_at_5']:.1%} ({cat['count']} questions)")
 
     # ── Save results ─────────────────────────────────────────
-    results_dir = Path(__file__).resolve().parent / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    output_path = results_dir / "retrieval_results.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     output = {
         "metadata": {
             "sample_size": n_evaluated,
-            "top_k": TOP_K,
+            "top_k": top_k,
             "seed": RANDOM_SEED,
-            "timestamp": datetime.now(tz=datetime.UTC).isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         },
         "overall": overall,
         "by_category": {str(k): v for k, v in by_category.items()},
@@ -257,7 +275,7 @@ def main() -> None:
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
 
-    print(f"\nResults saved to {output_path.relative_to(Path(__file__).resolve().parent.parent)}")
+    print(f"\nResults saved to {output_path}")
 
 
 if __name__ == "__main__":
