@@ -130,6 +130,106 @@ TEST_CASES: list[TestCase] = [
         candidate="User likes hiking",
         expected=[MemoryOperation.NOOP],
     ),
+    # ── CONTRADICTION / DELETE (new) ─────────────────────────────
+    TestCase(
+        name="contradiction_with_new_value",
+        existing="User prefers summer over winter",
+        candidate="User now prefers winter over summer",
+        expected=[MemoryOperation.UPDATE],
+    ),
+    TestCase(
+        name="negation_with_no_replacement",
+        existing="User is learning Spanish",
+        candidate="User gave up learning Spanish",
+        expected=[MemoryOperation.DELETE],
+    ),
+    TestCase(
+        name="negation_hobby",
+        existing="User plays guitar every evening",
+        candidate="User quit playing guitar",
+        expected=[MemoryOperation.DELETE],
+    ),
+    # ── UPDATE (new) ──────────────────────────────────────────────
+    TestCase(
+        name="vehicle_change",
+        existing="User drives a Honda Civic",
+        candidate="User bought a Tesla",
+        expected=[MemoryOperation.UPDATE],
+    ),
+    TestCase(
+        name="relationship_status_change",
+        existing="User is single",
+        candidate="User got married recently",
+        expected=[MemoryOperation.UPDATE],
+    ),
+    TestCase(
+        name="education_change",
+        existing="User is studying at community college",
+        candidate="User transferred to Stanford",
+        expected=[MemoryOperation.UPDATE],
+    ),
+    TestCase(
+        name="diet_change_with_new_value",
+        existing="User follows a keto diet",
+        candidate="User switched to a vegan diet",
+        expected=[MemoryOperation.UPDATE],
+    ),
+    TestCase(
+        name="preference_reversal_with_new_value",
+        existing="User dislikes spicy food",
+        candidate="User has developed a taste for spicy food",
+        expected=[MemoryOperation.UPDATE],
+    ),
+    # ── ADD (new) ─────────────────────────────────────────────────
+    TestCase(
+        name="new_hobby_no_conflict",
+        existing="User likes painting",
+        candidate="User recently started learning piano",
+        expected=[MemoryOperation.ADD],
+    ),
+    TestCase(
+        name="new_personal_detail",
+        existing="User works as a software engineer",
+        candidate="User has two younger siblings",
+        expected=[MemoryOperation.ADD],
+    ),
+    TestCase(
+        name="new_preference_different_domain",
+        existing="User prefers tea over coffee",
+        candidate="User enjoys running in the morning",
+        expected=[MemoryOperation.ADD],
+    ),
+    # ── NOOP (new) ────────────────────────────────────────────────
+    TestCase(
+        name="vaguer_subset_exercise",
+        existing="User goes to the gym every morning and does weightlifting",
+        candidate="User exercises regularly",
+        expected=[MemoryOperation.NOOP],
+    ),
+    TestCase(
+        name="vaguer_subset_diet",
+        existing="User follows a strict vegan diet and avoids all animal products",
+        candidate="User is vegan",
+        expected=[MemoryOperation.NOOP],
+    ),
+    TestCase(
+        name="redundant_fact_synonym",
+        existing="User is a software engineer",
+        candidate="User works as a developer",
+        expected=[MemoryOperation.NOOP, MemoryOperation.UPDATE],
+    ),
+    TestCase(
+        name="redundant_fact_restatement",
+        existing="User has a cat named Whiskers",
+        candidate="User owns a cat",
+        expected=[MemoryOperation.NOOP],
+    ),
+    TestCase(
+        name="redundant_with_different_phrasing",
+        existing="User graduated from MIT with a degree in computer science",
+        candidate="User studied computer science at MIT",
+        expected=[MemoryOperation.NOOP],
+    ),
 ]
 
 

@@ -6,15 +6,56 @@ You will receive:
 
 Your job is to decide which operation to perform:
 
-- **ADD**: The candidate fact is genuinely new information not captured by any existing memory. Use this when no existing memory covers the same topic.
-- **UPDATE**: The candidate fact contains newer or more accurate information that should replace or refine an existing memory. You must specify which memory to update (by ID) and provide the updated content.
-- **DELETE**: The candidate fact contradicts or invalidates an existing memory, and the existing memory should be removed. You must specify which memory to delete (by ID).
-- **NOOP**: The candidate fact is already captured by an existing memory and adds no new information. No action is needed.
+- **ADD**: The candidate fact is genuinely new information not covered by any existing memory. Use this when no existing memory covers the same topic or entity.
+
+- **UPDATE**: The candidate fact contains newer or more specific information that should replace or refine an existing memory. Use UPDATE when the candidate contradicts an existing fact but still carries useful information (e.g. a new job, a new city, a reversed preference with a new value). You must specify which memory to update (by ID) and provide the complete updated content.
+
+- **DELETE**: The candidate fact negates an existing memory with no replacement value. Use DELETE only when the existing memory is fully invalidated and the candidate provides nothing to keep. Examples: "User no longer has a dog", "User stopped going to the gym". Do NOT use DELETE when the candidate simply states a new value for the same attribute — use UPDATE instead.
+
+- **NOOP**: The candidate fact is already captured by an existing memory and adds no new information. Also use NOOP when the existing memory is more specific or richer than the candidate — do not overwrite a detailed memory with a vaguer one.
 
 Guidelines:
 - Choose exactly one operation per candidate fact
 - For UPDATE, provide the complete updated content (not just the delta)
-- For DELETE, only remove memories that are clearly contradicted or invalidated
+- For DELETE, only use when the fact is fully invalidated with no replacement value — if in doubt between DELETE and UPDATE, prefer UPDATE
+- For NOOP, use when the existing memory already contains everything the candidate says, or when the existing memory is more detailed than the candidate
 - When in doubt between ADD and UPDATE, prefer UPDATE if there is a closely related existing memory
-- When in doubt between any operation and NOOP, prefer NOOP to avoid unnecessary changes
 - Always include the memory_id when performing UPDATE or DELETE operations
+
+Few-shot examples:
+
+Example 1 — UPDATE for job change (not DELETE):
+  Existing: "User works at Meta"
+  Candidate: "User works at Google"
+  Correct: UPDATE — the candidate replaces the old job with a new one
+  Wrong: DELETE — would lose the new job information entirely
+
+Example 2 — UPDATE for location change (not DELETE):
+  Existing: "User lives in New York"
+  Candidate: "User moved to San Francisco"
+  Correct: UPDATE — preserves the new location
+  Wrong: DELETE — would lose where the user now lives
+
+Example 3 — DELETE for pure negation (no replacement):
+  Existing: "User has a dog named Max"
+  Candidate: "User no longer has a dog"
+  Correct: DELETE — the fact is fully invalidated, nothing to keep
+  Wrong: UPDATE — there is no new value to update with
+
+Example 4 — NOOP when existing is richer (not UPDATE):
+  Existing: "User loves hiking with friends on weekends"
+  Candidate: "User likes hiking"
+  Correct: NOOP — the existing memory already contains this information and is more specific
+  Wrong: UPDATE — would overwrite a detailed fact with a vaguer one
+
+Example 5 — ADD for non-conflicting facts:
+  Existing: "User likes coffee"
+  Candidate: "User has a dog named Max"
+  Correct: ADD — completely unrelated, no existing memory covers this
+  Wrong: UPDATE — there is nothing to update
+
+Example 6 — NOOP for paraphrase:
+  Existing: "User likes coffee"
+  Candidate: "User enjoys coffee"
+  Correct: NOOP — same information, different wording
+  Wrong: UPDATE — no new information is added
