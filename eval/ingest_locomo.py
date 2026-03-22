@@ -174,10 +174,9 @@ def main() -> None:
             tqdm.write(f"  Warning: could not check existing points: {e}")
 
         # Filter to new turns only
-        new_turns = [(pid, turn) for pid, turn in zip(point_ids, turns) if pid not in existing]
+        new_turns = [(pid, turn) for pid, turn in zip(point_ids, turns, strict=False) if pid not in existing]
 
         n_skip = len(turns) - len(new_turns)
-        n_new = len(new_turns)
         total_skipped += n_skip
 
         if not new_turns:
@@ -224,7 +223,7 @@ def main() -> None:
                         **turn,
                     },
                 )
-                for pid, vec, turn in zip(batch_ids, vectors, batch_turns)
+                for pid, vec, turn in zip(batch_ids, vectors, batch_turns, strict=False)
             ]
 
             try:

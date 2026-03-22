@@ -45,7 +45,7 @@ async def chat(
 
     t0 = time.perf_counter()
     memories = await retriever.retrieve(query=payload.message, user_id=payload.user_id)
-    logger.info(
+    logger.debug(
         "step=retrieve time=%.3fs memories=%d", time.perf_counter() - t0, len(memories)
     )
 
@@ -54,13 +54,13 @@ async def chat(
         memories=memories,
     )
 
-    previous = Message(
+    current = Message(
         user_id=payload.user_id,
         session_id=payload.session_id,
         role="user",
         content=payload.message,
     )
-    current = Message(
+    previous = Message(
         user_id=payload.user_id,
         session_id=payload.session_id,
         role="assistant",
@@ -78,7 +78,7 @@ async def chat(
             pair=pair, user_id=payload.user_id, session_id=payload.session_id
         ),
     )
-    logger.info(
+    logger.debug(
         "step=reply_and_memory time=%.3fs facts=%d", time.perf_counter() - t0, len(facts)
     )
 

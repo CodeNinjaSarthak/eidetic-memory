@@ -18,7 +18,7 @@ import os
 import random
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -247,7 +247,7 @@ def main() -> None:
             "sample_size": n_evaluated,
             "top_k": TOP_K,
             "seed": RANDOM_SEED,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(tz=datetime.UTC).isoformat(),
         },
         "overall": overall,
         "by_category": {str(k): v for k, v in by_category.items()},
