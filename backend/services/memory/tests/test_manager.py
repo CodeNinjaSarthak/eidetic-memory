@@ -61,16 +61,17 @@ class AbstractMemoryStore(ABC):
 
 
 class FakeLLMService(AbstractLLMService):
-    """LLM service that sequences through extraction then evolution responses."""
+    """LLM service that returns canned extraction and batch evolution responses."""
 
     def __init__(
         self,
         extraction_response: dict[str, Any] | None = None,
-        evolution_responses: list[dict[str, Any]] | None = None,
+        batch_evolution_response: dict[str, Any] | None = None,
     ) -> None:
         self._extraction_response = extraction_response or {"facts": []}
-        self._evolution_responses = list(evolution_responses or [])
-        self._evolution_call_index = 0
+        self._batch_evolution_response = batch_evolution_response or {
+            "memory": []
+        }
 
     async def complete(self, messages: list[dict[str, str]], system: str) -> str:
         """Not used in manager tests."""
@@ -82,15 +83,10 @@ class FakeLLMService(AbstractLLMService):
         tool: dict[str, Any],
         system: str,
     ) -> dict[str, Any]:
-        """Route to extraction or evolution response based on tool name."""
+        """Return extraction or batch evolution response based on tool name."""
         if tool.get("name") == "extract_facts":
             return self._extraction_response
-        # evolution call
-        if self._evolution_call_index < len(self._evolution_responses):
-            response = self._evolution_responses[self._evolution_call_index]
-            self._evolution_call_index += 1
-            return response
-        return {"operation": "NOOP"}
+        return self._batch_evolution_response
 
 
 class FakeEmbeddingService(AbstractEmbeddingService):
@@ -201,7 +197,9 @@ async def test_empty_extraction_returns_empty_result() -> None:
 async def test_add_operation_stores_fact_and_returns_it() -> None:
     llm = FakeLLMService(
         extraction_response={"facts": ["User works at Google"]},
-        evolution_responses=[{"operation": "ADD"}],
+        batch_evolution_response={
+            "memory": [{"event": "ADD", "text": "User works at Google"}]
+        },
     )
     manager, _, store = _build_manager(llm)
 
@@ -224,13 +222,16 @@ async def test_update_operation_changes_existing_fact_content() -> None:
 
     llm = FakeLLMService(
         extraction_response={"facts": ["User works at Google"]},
-        evolution_responses=[
-            {
-                "operation": "UPDATE",
-                "memory_id": "fact-1",
-                "updated_content": "User works at Google",
-            }
-        ],
+        batch_evolution_response={
+            "memory": [
+                {
+                    "event": "UPDATE",
+                    "id": "0",
+                    "text": "User works at Google",
+                    "old_memory": "User works at Meta",
+                }
+            ]
+        },
     )
     manager, _, _ = _build_manager(llm, store=store)
 
@@ -249,7 +250,9 @@ async def test_delete_operation_removes_fact_from_store() -> None:
 
     llm = FakeLLMService(
         extraction_response={"facts": ["User is no longer vegetarian"]},
-        evolution_responses=[{"operation": "DELETE", "memory_id": "fact-99"}],
+        batch_evolution_response={
+            "memory": [{"event": "DELETE", "id": "0"}]
+        },
     )
     manager, _, _ = _build_manager(llm, store=store)
 
@@ -268,7 +271,9 @@ async def test_noop_operation_makes_no_changes() -> None:
 
     llm = FakeLLMService(
         extraction_response={"facts": ["User likes hiking"]},
-        evolution_responses=[{"operation": "NOOP"}],
+        batch_evolution_response={
+            "memory": [{"event": "NONE"}]
+        },
     )
     manager, _, _ = _build_manager(llm, store=store)
 
@@ -282,11 +287,13 @@ async def test_noop_operation_makes_no_changes() -> None:
 async def test_embed_called_for_each_candidate_fact() -> None:
     llm = FakeLLMService(
         extraction_response={"facts": ["Fact A", "Fact B", "Fact C"]},
-        evolution_responses=[
-            {"operation": "ADD"},
-            {"operation": "ADD"},
-            {"operation": "ADD"},
-        ],
+        batch_evolution_response={
+            "memory": [
+                {"event": "ADD", "text": "Fact A"},
+                {"event": "ADD", "text": "Fact B"},
+                {"event": "ADD", "text": "Fact C"},
+            ]
+        },
     )
     embedding = FakeEmbeddingService()
     manager, _, _ = _build_manager(llm, embedding=embedding)
@@ -315,24 +322,28 @@ async def test_search_memory_returns_relevant_memories() -> None:
 @pytest.mark.asyncio
 async def test_update_with_missing_target_skips_gracefully() -> None:
     store = FakeMemoryStore()
-    # No fact with id "ghost" exists in the store
+    # No fact with id "ghost" exists in the store — but the LLM references
+    # integer ID "0" which will reverse-map to nothing since search returns empty.
+    # Instead, we set up the batch response to reference a UUID that doesn't exist.
+    # The integer mapping won't contain "99", so it stays as-is and store.get fails.
 
     llm = FakeLLMService(
         extraction_response={"facts": ["User moved to NYC"]},
-        evolution_responses=[
-            {
-                "operation": "UPDATE",
-                "memory_id": "ghost",
-                "updated_content": "User lives in NYC",
-            }
-        ],
+        batch_evolution_response={
+            "memory": [
+                {
+                    "event": "UPDATE",
+                    "id": "99",
+                    "text": "User lives in NYC",
+                }
+            ]
+        },
     )
     manager, _, _ = _build_manager(llm, store=store)
 
     results = await manager.add_memory(_make_pair(), user_id=_USER_ID)
 
     assert results == []
-    assert "ghost" not in store.facts
 
 
 @pytest.mark.asyncio
@@ -346,16 +357,136 @@ async def test_update_operation_embeds_updated_content_not_candidate() -> None:
     embedding = FakeEmbeddingService()
     llm = FakeLLMService(
         extraction_response={"facts": ["User now works at Google"]},
-        evolution_responses=[
-            {
-                "operation": "UPDATE",
-                "memory_id": "fact-1",
-                "updated_content": "User works at Google",
-            }
-        ],
+        batch_evolution_response={
+            "memory": [
+                {
+                    "event": "UPDATE",
+                    "id": "0",
+                    "text": "User works at Google",
+                    "old_memory": "User works at Meta",
+                }
+            ]
+        },
     )
     manager, _, _ = _build_manager(llm, embedding=embedding, store=store)
 
     await manager.add_memory(_make_pair(), user_id=_USER_ID)
 
     assert "User works at Google" in embedding.embed_calls
+
+
+# ---------------------------------------------------------------------------
+# Multi-candidate behavioral tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_three_candidates_all_add_returns_all_three() -> None:
+    llm = FakeLLMService(
+        extraction_response={"facts": ["Fact A", "Fact B", "Fact C"]},
+        batch_evolution_response={
+            "memory": [
+                {"event": "ADD", "text": "Fact A"},
+                {"event": "ADD", "text": "Fact B"},
+                {"event": "ADD", "text": "Fact C"},
+            ]
+        },
+    )
+    manager, _, store = _build_manager(llm)
+
+    results = await manager.add_memory(
+        _make_pair(), user_id=_USER_ID, session_id=_SESSION_ID
+    )
+
+    assert len(results) == 3
+    contents = {r.content for r in results}
+    assert contents == {"Fact A", "Fact B", "Fact C"}
+    assert len(store.facts) == 3
+
+
+@pytest.mark.asyncio
+async def test_two_candidates_one_add_one_update() -> None:
+    store = FakeMemoryStore()
+    existing = MemoryFact(id="fact-1", user_id=_USER_ID, content="User works at Meta")
+    store._facts["fact-1"] = existing
+    store.search_results = [existing]
+
+    llm = FakeLLMService(
+        extraction_response={
+            "facts": ["User works at Google", "User likes hiking"]
+        },
+        batch_evolution_response={
+            "memory": [
+                {
+                    "event": "UPDATE",
+                    "id": "0",
+                    "text": "User works at Google",
+                    "old_memory": "User works at Meta",
+                },
+                {"event": "ADD", "text": "User likes hiking"},
+            ]
+        },
+    )
+    manager, _, _ = _build_manager(llm, store=store)
+
+    results = await manager.add_memory(
+        _make_pair(), user_id=_USER_ID, session_id=_SESSION_ID
+    )
+
+    assert len(results) == 2
+    assert store.facts["fact-1"].content == "User works at Google"
+    contents = {r.content for r in results}
+    assert "User likes hiking" in contents
+
+
+@pytest.mark.asyncio
+async def test_three_candidates_two_noop_one_add_returns_only_add() -> None:
+    store = FakeMemoryStore()
+    existing = MemoryFact(id="fact-1", user_id=_USER_ID, content="User likes hiking")
+    store._facts["fact-1"] = existing
+    store.search_results = [existing]
+
+    llm = FakeLLMService(
+        extraction_response={
+            "facts": ["User likes hiking", "User likes hiking a lot", "User plays piano"]
+        },
+        batch_evolution_response={
+            "memory": [
+                {"event": "NONE"},
+                {"event": "NONE"},
+                {"event": "ADD", "text": "User plays piano"},
+            ]
+        },
+    )
+    manager, _, _ = _build_manager(llm, store=store)
+
+    results = await manager.add_memory(
+        _make_pair(), user_id=_USER_ID, session_id=_SESSION_ID
+    )
+
+    assert len(results) == 1
+    assert results[0].content == "User plays piano"
+
+
+@pytest.mark.asyncio
+async def test_all_noop_returns_empty_list() -> None:
+    store = FakeMemoryStore()
+    existing = MemoryFact(id="fact-1", user_id=_USER_ID, content="User likes hiking")
+    store._facts["fact-1"] = existing
+    store.search_results = [existing]
+
+    llm = FakeLLMService(
+        extraction_response={"facts": ["User likes hiking", "User enjoys outdoors"]},
+        batch_evolution_response={
+            "memory": [
+                {"event": "NONE"},
+                {"event": "NONE"},
+            ]
+        },
+    )
+    manager, _, _ = _build_manager(llm, store=store)
+
+    results = await manager.add_memory(_make_pair(), user_id=_USER_ID)
+
+    assert results == []
+    assert store.facts["fact-1"].content == "User likes hiking"

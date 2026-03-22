@@ -10,7 +10,7 @@ import logging
 from llm.embeddings.base import AbstractEmbeddingService
 from llm.generation.base import AbstractLLMService
 from memory.models.conversation import ConversationPair, Message
-from memory.models.memory import MemoryFact, MemoryOperation, MemoryUpdate
+from memory.models.memory import MemoryFact, MemoryOperation
 from memory.pipeline.extraction import ExtractionPipeline
 from memory.pipeline.update import EvolutionEngine
 from storage.base import AbstractMemoryStore
@@ -47,19 +47,19 @@ class MemoryManager:
         self._evolution = EvolutionEngine(llm_service)
         self._similarity_top_k = similarity_top_k
 
-    async def _decide_candidate(
+    async def _embed_and_search(
         self,
         candidate: str,
         user_id: str,
-    ) -> tuple[str, list[float], MemoryUpdate]:
-        """Embed, search, and evolve a single candidate fact.
+    ) -> tuple[str, list[float], list[MemoryFact]]:
+        """Embed a candidate fact and search for similar existing memories.
 
         Args:
             candidate: The candidate fact text.
             user_id: The user who owns these memories.
 
         Returns:
-            Tuple of (candidate text, embedding vector, evolution decision).
+            Tuple of (candidate text, embedding vector, similar memories).
         """
         embedding = await self._embedding_service.embed(candidate)
         similar = await self._store.search(
@@ -67,8 +67,7 @@ class MemoryManager:
             query_embedding=embedding,
             top_k=self._similarity_top_k,
         )
-        update = await self._evolution.decide(candidate, similar)
-        return candidate, embedding, update
+        return candidate, embedding, similar
 
     async def add_memory(
         self,
@@ -97,13 +96,48 @@ class MemoryManager:
         if not candidates:
             return []
 
-        decisions = await asyncio.gather(
-            *[self._decide_candidate(c, user_id) for c in candidates]
+        # Phase 1: Embed + search in parallel for all candidates
+        search_results = await asyncio.gather(
+            *[self._embed_and_search(c, user_id) for c in candidates]
         )
 
+        # Phase 2: Build embeddings dict and deduplicate existing memories
+        embeddings: dict[str, list[float]] = {}
+        all_existing: dict[str, MemoryFact] = {}
+        for candidate, embedding, similar in search_results:
+            embeddings[candidate] = embedding
+            for mem in similar:
+                all_existing[mem.id] = mem
+
+        # Phase 3: Map UUIDs to sequential integers
+        uuid_to_int: dict[str, str] = {
+            mem_id: str(idx) for idx, mem_id in enumerate(all_existing)
+        }
+        int_to_uuid: dict[str, str] = {v: k for k, v in uuid_to_int.items()}
+
+        mapped_memories = [
+            {"id": uuid_to_int[mem_id], "text": mem.content}
+            for mem_id, mem in all_existing.items()
+        ]
+
+        # Phase 4: ONE batch evolution call
+        candidate_texts = [c for c, _, _ in search_results]
+        batch_updates = await self._evolution.decide_batch(
+            candidate_texts, mapped_memories
+        )
+
+        # Phase 5: Reverse-map integer IDs back to UUIDs
+        for update in batch_updates:
+            if update.memory_id and update.memory_id in int_to_uuid:
+                update.memory_id = int_to_uuid[update.memory_id]
+
+        # Phase 6: Execute operations
         results: list[MemoryFact] = []
 
-        for candidate, embedding, update in decisions:
+        for i, update in enumerate(batch_updates):
+            candidate = candidate_texts[i]
+            embedding = embeddings[candidate]
+
             if update.operation == MemoryOperation.ADD:
                 fact = MemoryFact(
                     user_id=user_id,
