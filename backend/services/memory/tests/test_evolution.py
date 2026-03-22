@@ -232,3 +232,83 @@ async def test_evolution_engine_context_shows_none_when_no_existing_memories() -
 
     user_content = service.captured_messages[0][0]["content"]
     assert "Existing Memories:\nNone" in user_content
+
+
+# ---------------------------------------------------------------------------
+# decide_batch() tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_batch_evolution_returns_multiple_adds() -> None:
+    service = FakeLLMService(
+        tool_response={
+            "memory": [
+                {"event": "ADD", "text": "User works at Google"},
+                {"event": "ADD", "text": "User likes coffee"},
+            ]
+        }
+    )
+    engine = EvolutionEngine(llm_service=service)
+
+    results = await engine.decide_batch(
+        candidates=["User works at Google", "User likes coffee"],
+        existing_memories=[],
+    )
+
+    assert len(results) == 2
+    assert results[0].operation == MemoryOperation.ADD
+    assert results[0].updated_content == "User works at Google"
+    assert results[1].operation == MemoryOperation.ADD
+    assert results[1].updated_content == "User likes coffee"
+
+
+@pytest.mark.asyncio
+async def test_batch_evolution_returns_mixed_operations() -> None:
+    service = FakeLLMService(
+        tool_response={
+            "memory": [
+                {"event": "ADD", "text": "User plays piano"},
+                {
+                    "event": "UPDATE",
+                    "id": "0",
+                    "text": "User works at Google",
+                    "old_memory": "User works at Meta",
+                },
+                {"event": "DELETE", "id": "1"},
+                {"event": "NONE"},
+            ]
+        }
+    )
+    engine = EvolutionEngine(llm_service=service)
+
+    results = await engine.decide_batch(
+        candidates=["User plays piano", "Changed jobs", "Old fact", "Same fact"],
+        existing_memories=[
+            {"id": "0", "text": "User works at Meta"},
+            {"id": "1", "text": "User is vegetarian"},
+        ],
+    )
+
+    assert len(results) == 4
+    assert results[0].operation == MemoryOperation.ADD
+    assert results[1].operation == MemoryOperation.UPDATE
+    assert results[1].memory_id == "0"
+    assert results[1].updated_content == "User works at Google"
+    assert results[2].operation == MemoryOperation.DELETE
+    assert results[2].memory_id == "1"
+    assert results[3].operation == MemoryOperation.NOOP
+
+
+@pytest.mark.asyncio
+async def test_batch_evolution_falls_back_to_noop_on_malformed_response() -> None:
+    service = FakeLLMService(tool_response={"unrelated": "value"})
+    engine = EvolutionEngine(llm_service=service)
+
+    results = await engine.decide_batch(
+        candidates=["Fact A", "Fact B"],
+        existing_memories=[],
+    )
+
+    assert len(results) == 2
+    assert all(r.operation == MemoryOperation.NOOP for r in results)

@@ -67,12 +67,12 @@ class QdrantMemoryStore(AbstractMemoryStore):
                     distance=Distance.COSINE,
                 ),
             )
+            await self._client.create_payload_index(
+                collection_name=self._collection_name,
+                field_name="user_id",
+                field_schema="keyword",
+            )
             logger.info("Created Qdrant collection '%s'", self._collection_name)
-        await self._client.create_payload_index(
-            collection_name=self._collection_name,
-            field_name="user_id",
-            field_schema="keyword",
-        )
         QdrantMemoryStore._initialized = True
 
     async def upsert(self, fact: MemoryFact) -> None:
