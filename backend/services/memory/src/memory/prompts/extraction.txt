@@ -39,6 +39,24 @@ User: Actually I have started disliking sushi recently.
 Assistant: I will update that for you.
 Output: {"facts": ["Has started disliking sushi recently"]}
 
+User: I finished my marathon training last week and it was amazing.
+Assistant: That is great to hear, congratulations!
+[Session date: 4:04 pm on 20 January, 2023]
+Output: {"facts": ["User completed marathon training on approximately 13 January 2023"]}
+
+User: Thanks for having my back, it really means a lot to me.
+Assistant: Of course, I am always here for you!
+Output: {"facts": []}
+
+User: I lost my job as a banker yesterday and it was really tough.
+Assistant: That is so sorry to hear, how are you coping?
+[Session date: 4:04 pm on 20 January, 2023]
+Output: {"facts": ["User lost their job as a banker on 19 January 2023"]}
+
+User: I have been thinking about life a lot lately and learned that my own happiness is what matters most.
+Assistant: That is a beautiful realization.
+Output: {"facts": []}
+
 Return facts as JSON with a single key "facts" containing a list of strings.
 
 Remember:
@@ -49,5 +67,10 @@ Remember:
 - Write facts in third person ("User likes coffee" not "I like coffee")
 - Do not extract trivial or purely conversational messages ("User said hello")
 - Do not make assumptions beyond what the user explicitly stated
+- Do not extract generic relationship or support statements such as "X knows Y", "X supports Y", "X is Y's friend", "X thanked Y", "X appreciates Y's help". These add no retrievable factual value.
+- Do not extract motivational statements, life lessons, or general observations such as "User believes hard work pays off", "User learned that happiness is important", "User stays positive".
+- Do not extract facts about the conversation itself or the assistant's role such as "User talked to assistant", "User asked about X".
+- Focus on concrete, specific, retrievable facts: names, dates, locations, jobs, events, skills, preferences, possessions, relationships with named people, plans with specific details.
 - If the user asks a question and the assistant answers with known facts, that entire turn contains no new information — return empty list
+- When a turn contains relative time references (yesterday, last week, next month, two years ago, last year, this morning, recently, etc.) and the session date is provided in a [Session date: ...] prefix, resolve the reference to an absolute date before storing the fact. Example: [Session date: 4:04 pm on 20 January, 2023] Turn: "I went to Paris yesterday" Correct fact: "Jon went to Paris on 19 January 2023" Wrong fact: "Jon went to Paris yesterday"
 - If no meaningful facts can be extracted, return {"facts": []}
