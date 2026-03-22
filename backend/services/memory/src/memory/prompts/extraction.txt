@@ -39,6 +39,11 @@ User: Actually I have started disliking sushi recently.
 Assistant: I will update that for you.
 Output: {"facts": ["Has started disliking sushi recently"]}
 
+User: I finished my marathon training last week and it was amazing.
+Assistant: That is great to hear, congratulations!
+[Session date: 4:04 pm on 20 January, 2023]
+Output: {"facts": ["User completed marathon training on approximately 13 January 2023"]}
+
 Return facts as JSON with a single key "facts" containing a list of strings.
 
 Remember:
@@ -50,4 +55,5 @@ Remember:
 - Do not extract trivial or purely conversational messages ("User said hello")
 - Do not make assumptions beyond what the user explicitly stated
 - If the user asks a question and the assistant answers with known facts, that entire turn contains no new information — return empty list
+- When a turn contains relative time references (yesterday, last week, next month, two years ago, last year, this morning, recently, etc.) and the session date is provided in a [Session date: ...] prefix, resolve the reference to an absolute date before storing the fact. Example: [Session date: 4:04 pm on 20 January, 2023] Turn: "I went to Paris yesterday" Correct fact: "Jon went to Paris on 19 January 2023" Wrong fact: "Jon went to Paris yesterday"
 - If no meaningful facts can be extracted, return {"facts": []}
