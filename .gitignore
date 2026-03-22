@@ -46,3 +46,4 @@ eval/data/*.json
 
 .claude
 Claude.md
+eval/results/*.json
