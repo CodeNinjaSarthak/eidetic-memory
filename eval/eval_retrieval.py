@@ -29,7 +29,7 @@ from tqdm import tqdm
 
 # ── Constants ────────────────────────────────────────────────
 COLLECTION_NAME = "locomo_eval"
-SAMPLE_SIZE = 200
+SAMPLE_SIZE = 10
 TOP_K = 10
 RANDOM_SEED = 42
 K_VALUES = [1, 3, 5, 10]
@@ -96,7 +96,7 @@ def collect_qa_entries(dataset: list[dict]) -> list[dict]:
                 {
                     "sample_id": sample_id,
                     "question": qa["question"],
-                    "answer": qa["answer"],
+                    "answer": qa.get("answer", ""),
                     "evidence": evidence,
                     "category": qa["category"],
                 }
