@@ -10,7 +10,7 @@ Usage:
 
 Reads .env.development for configuration.
 Searches locomo_eval Qdrant collection.
-Reports Hit@1, Hit@3, Hit@5, Hit@10 by category.
+Reports Hit@1, Hit@3, Hit@5, Hit@10, Hit@20 by category.
 """
 
 import argparse
@@ -31,7 +31,7 @@ from tqdm import tqdm
 # ── Constants ────────────────────────────────────────────────
 COLLECTION_NAME = "locomo_eval"
 RANDOM_SEED = 42
-K_VALUES = [1, 3, 5, 10]
+K_VALUES = [1, 3, 5, 10, 20]
 CATEGORIES = {
     1: "Single-hop",
     2: "Temporal",
@@ -110,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Retrieval accuracy evaluation on LoCoMo dataset.")
     parser.add_argument("--limit", type=int, default=10, help="Number of QA pairs to evaluate (default: 10)")
-    parser.add_argument("--top-k", type=int, default=10, help="Retrieval depth (default: 10)")
+    parser.add_argument("--top-k", type=int, default=20, help="Retrieval depth (default: 20)")
     parser.add_argument(
         "--output",
         type=str,
@@ -249,7 +249,7 @@ def main() -> None:
     print("\nOverall Results:")
     for k in K_VALUES:
         key = f"hit_at_{k}"
-        print(f"  Hit@{k}:{' ' * (2 - len(str(k)))} {overall[key]:.1%}")
+        print(f"  Hit@{k}: {overall[key]:.1%}")
 
     print("\nResults by Category (Hit@5):")
     for cat_id in sorted(by_category):
