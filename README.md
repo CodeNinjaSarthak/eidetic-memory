@@ -1,4 +1,6 @@
-# Eidetic Memory
+# 🧠 Eidetic Memory
+
+**Long-term memory for AI agents — extracts, evolves, and retrieves facts across conversations.**
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.13%2B-blue?style=flat-square" />
@@ -6,21 +8,19 @@
   <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
   <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
-</p>
-
-<p align="center">
-  <strong>Long-term memory for AI agents.</strong><br/>
-  Extracts facts from conversations, evolves them over time,
-  and retrieves the right context when it matters.
+  <img src="https://img.shields.io/badge/LoCoMo_QA-53.2%25-brightgreen?style=flat-square" />
 </p>
 
 ---
 
-## Demo
+## ✨ Why Eidetic Memory
 
-> 🎥 Demo GIF coming soon — chat UI with live memory extraction
-
-<!-- Replace with actual demo GIF -->
+- 🧠 **Remembers what matters** — extracts atomic facts from every conversation turn, not raw chat logs
+- ⚡ **Evolves over time** — ADD, UPDATE, DELETE, NOOP decisions keep memory fresh and conflict-free
+- 🎯 **Retrieves the right context** — semantic search + importance reranking surfaces relevant facts at query time
+- 🗣️ **Multi-party ready** — per-speaker memory isolation prevents cross-speaker contamination in group conversations
+- 🔌 **Any LLM, any time** — swap Claude, Gemini, Azure OpenAI, or Groq with a single env var
+- 📊 **Benchmark-validated** — 53.2% QA accuracy on LoCoMo, 3.54x over baseline
 
 ---
 
@@ -57,21 +57,9 @@ Retrieved context → injected into LLM system prompt
 
 ---
 
-## Features
+## 📊 Evaluation
 
-- **Fact extraction** — identifies atomic facts from conversation pairs using LLM tool calling
-- **Memory evolution** — decides ADD, UPDATE, DELETE, or NOOP by comparing candidates against semantically similar existing memories
-- **Importance scoring** — recency × frequency scoring surfaces the most relevant memories at retrieval time
-- **Multi-LLM** — plug in Claude, Gemini, Azure OpenAI, or Groq with a single env var change
-- **Async throughout** — every I/O operation is async; no blocking calls anywhere in the stack
-- **Chat UI** — Next.js frontend with live memory extraction and a memory browser
-
----
-
-## Evaluation
-
-Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) —
-long-form multi-session conversations with QA pairs across 4 categories.
+Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) (conv-26 + conv-30, n=233 QA pairs) — long-form multi-session conversations with per-speaker memory isolation.
 
 ### Component accuracy
 
@@ -90,31 +78,31 @@ long-form multi-session conversations with QA pairs across 4 categories.
 | 10 | 38% |
 | 20 | **56%** |
 
-### End-to-end QA accuracy (LoCoMo conv-26 + conv-30, n=233)
+### End-to-end QA accuracy
 
 | Category | Accuracy |
 |----------|----------|
-| Temporal | **63.5%** |
-| Open-domain | 55.3% |
+| Temporal | **68.3%** |
+| Open-domain | 52.6% |
 | Single-hop | 37.2% |
-| Multi-hop | 23.1% |
-| **Overall** | **52.4%** |
+| Multi-hop | 38.5% |
+| **Overall** | **53.2%** |
+
+### Progress
 
 | Run | Score | Details |
 |-----|-------|---------|
-| Baseline | 14.8% | Gemini, conv-30 only, top-k=10, n=81 |
-| **Current** | **52.4%** | GPT-4o + Azure embeddings, conv-26+conv-30, top-k=30, n=233 |
-
-> LoCoMo is a challenging multi-party benchmark designed for human-to-human
-> conversations with per-speaker memory isolation. mem0 paper reports ~70% on
-> the same benchmark — the remaining gap is documented for the next milestone.
+| Baseline | 14.8% | Gemini, conv-30 only, top-k=10 |
+| + Per-speaker isolation | 31.8% | Multi-namespace retrieval |
+| + Fixed merge | 52.4% | Round-robin interleaving |
+| **+ Named entities + two-pass** | **53.2%** | Current best |
+| mem0 paper | ~70% | Target ceiling |
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-**Prerequisites:** Python 3.13+, Node 18+, [uv](https://docs.astral.sh/uv/),
-[Qdrant Cloud](https://qdrant.tech/) account, Google API key.
+**Prerequisites:** Python 3.13+, Node 18+, [uv](https://docs.astral.sh/uv/), [Qdrant Cloud](https://qdrant.tech/) account, Google API key.
 
 ```bash
 # 1. Clone and install
@@ -133,51 +121,7 @@ make run
 make frontend-install && make frontend-dev
 ```
 
-Backend: `http://localhost:8000` · Frontend: `http://localhost:3000`
-
----
-
-## API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/memories/` | Extract and store facts from a conversation turn |
-| `POST` | `/memories/search` | Semantic similarity search |
-| `GET` | `/memories/{user_id}` | List all memories for a user |
-| `DELETE` | `/memories/{memory_id}` | Delete a memory |
-| `POST` | `/chat/` | Memory-augmented chat turn |
-| `GET` | `/health` | Health check |
-
-### Extract memories
-
-```bash
-curl -X POST http://localhost:8000/memories/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "user-1",
-    "session_id": "session-1",
-    "current_message": {
-      "role": "user",
-      "content": "I just moved to Berlin for a new job at a startup.",
-      "user_id": "user-1",
-      "session_id": "session-1"
-    },
-    "previous_message": {
-      "role": "assistant",
-      "content": "That sounds exciting! Tell me more.",
-      "user_id": "user-1",
-      "session_id": "session-1"
-    }
-  }'
-```
-
-### Search memories
-
-```bash
-curl -X POST http://localhost:8000/memories/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Where does the user live?", "user_id": "user-1", "top_k": 5}'
-```
+Backend: `http://localhost:8000` · Frontend: `http://localhost:3000` · API docs: `http://localhost:8000/docs`
 
 ---
 
@@ -248,8 +192,17 @@ make check       # lint + test
 make run         # start API with hot reload
 ```
 
-Tests follow Google-style: behavior-focused, one reason to fail,
-no mocking unless external I/O. See [ARCHITECTURE.md](ARCHITECTURE.md).
+142 tests · behavior-focused · no mocks except external I/O
+
+Tests follow Google-style testing principles. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Contributing
+
+- 🐛 Found a bug? Open an issue with reproduction steps
+- 💡 Have an idea? Check open issues first, then open a discussion
+- 🔧 Want to contribute? PRs welcome — run `make check` before submitting
 
 ---
 
