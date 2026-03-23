@@ -343,6 +343,40 @@ async def main() -> None:
             system=system_prompt,
         )
 
+        # Two-pass retrieval: if first pass fails, retry with rephrased query
+        if "don't know" in generated_answer.lower() or "do not know" in generated_answer.lower():
+            # Rephrase: extract key nouns from question for a broader search
+            rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
+            rephrased_query = await llm_service.complete(
+                messages=[{"role": "user", "content": rephrase_prompt}],
+                system="Return only the rephrased query, nothing else.",
+            )
+            memories_a2 = await retriever.retrieve(
+                query=rephrased_query,
+                user_id=entry_speaker_a_user_id,
+            )
+            memories_b2 = await retriever.retrieve(
+                query=rephrased_query,
+                user_id=entry_speaker_b_user_id,
+            )
+            # Merge second-pass results with first-pass, deduplicate
+            seen_contents2: set[str] = set(f.content for f in memories)
+            for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
+                if fact.content not in seen_contents2:
+                    seen_contents2.add(fact.content)
+                    memories.append(fact)
+            memories = memories[:30]
+
+            # Regenerate answer with expanded context
+            system_prompt = context_builder.build_system_prompt(
+                ANSWER_SYSTEM_PROMPT,
+                memories,
+            )
+            generated_answer = await llm_service.complete(
+                messages=[{"role": "user", "content": question}],
+                system=system_prompt,
+            )
+
         # Judge
         label = await judge_answer(
             azure_client,

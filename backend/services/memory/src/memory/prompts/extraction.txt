@@ -71,6 +71,8 @@ Remember:
 - Do not extract motivational statements, life lessons, or general observations such as "User believes hard work pays off", "User learned that happiness is important", "User stays positive".
 - Do not extract facts about the conversation itself or the assistant's role such as "User talked to assistant", "User asked about X".
 - Focus on concrete, specific, retrievable facts: names, dates, locations, jobs, events, skills, preferences, possessions, relationships with named people, plans with specific details.
+- Always preserve specific named entities exactly as stated: country names, city names, people's names, organization names, exact numbers, quantities, and durations. Never replace a specific entity with a generic description (e.g. "moved from Sweden" not "moved from their home country", "has 2 kids" not "has kids").
+- Only extract facts about the CURRENT speaker — the person who sent the current message. The previous message provides conversational context only. Do not extract facts about the previous speaker from the previous message.
 - If the user asks a question and the assistant answers with known facts, that entire turn contains no new information — return empty list
 - When a turn contains relative time references (yesterday, last week, next month, two years ago, last year, this morning, recently, etc.) and the session date is provided in a [Session date: ...] prefix, resolve the reference to an absolute date before storing the fact. Example: [Session date: 4:04 pm on 20 January, 2023] Turn: "I went to Paris yesterday" Correct fact: "Jon went to Paris on 19 January 2023" Wrong fact: "Jon went to Paris yesterday"
 - If no meaningful facts can be extracted, return {"facts": []}

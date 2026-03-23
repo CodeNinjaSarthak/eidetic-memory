@@ -57,13 +57,19 @@ SESSION_KEY_RE = re.compile(r"^session_(\d+)$")
 
 
 def replace_user_with_speaker(content: str, speaker_name: str) -> str:
-    """Replace generic 'User'/'user' with the actual speaker name.
+    """Replace generic 'User'/'user' references with the actual speaker name.
 
-    Only matches 'The user'/'The User' anywhere, or 'User'/'user' at string start.
-    Avoids corrupting 'user' when it appears as a common noun mid-sentence.
+    Replaces:
+    - Capitalized 'User' anywhere (always a proper noun in extracted facts)
+    - Lowercase 'user' at string start or after sentence boundaries (. ! ?)
+    Avoids corrupting 'user' as a common noun mid-sentence (e.g. 'end-user').
     """
-    content = re.sub(r"\bThe [Uu]ser\b", speaker_name, content)
-    content = re.sub(r"^[Uu]ser\b", speaker_name, content)
+    # Capitalized User is always a proper noun reference in extracted facts
+    content = re.sub(r"\bUser\b", speaker_name, content)
+    # Lowercase user at sentence boundaries
+    content = re.sub(r"(?<=[.!?]\s)user\b", speaker_name, content)
+    # Lowercase user at string start
+    content = re.sub(r"^user\b", speaker_name, content)
     return content
 
 
