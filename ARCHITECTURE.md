@@ -1,6 +1,6 @@
 # Architecture
 
-This repository implements the memory system described in [Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory (arXiv:2504.19413v1)](https://arxiv.org/abs/2504.19413v1). The paper defines a pipeline where conversation pairs are processed to extract facts, evolve them against existing memories, and retrieve them via semantic search. This codebase follows that pipeline as a monorepo with clear service boundaries, structured like microservices but deployed as a monolith.
+Eidetic Memory is a long-term memory system for AI agents. Conversation pairs are processed to extract facts, evolve them against existing memories, and retrieve them via semantic search. The codebase is a monorepo with clear service boundaries, structured like microservices but deployed as a monolith.
 
 ## Dependency Graph
 
@@ -72,7 +72,7 @@ Circular dependencies between these layers are not allowed.
 
 12. **Qdrant as vector store.** Chosen for managed cloud hosting, filtering by `user_id`, and payload storage alongside vectors. The collection name is configurable.
 
-13. **Paper parameters as config.** `recency_window=10` (paper param m) and `similarity_top_k=10` (paper param s) are environment variables, not hardcoded constants.
+13. **Pipeline parameters as config.** `recency_window` and `similarity_top_k` are environment variables with sensible defaults, not hardcoded constants. This makes the pipeline tunable without code changes.
 
 14. **Embedding model decoupled from LLM provider.** Gemini embeddings are used regardless of which LLM provider handles generation. This avoids tying embedding quality to provider choice.
 

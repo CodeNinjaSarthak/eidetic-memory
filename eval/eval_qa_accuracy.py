@@ -10,8 +10,8 @@ End-to-end QA accuracy evaluation on LoCoMo dataset.
 
 Usage:
     uv run python eval/eval_qa_accuracy.py
-    uv run python eval/eval_qa_accuracy.py --conv-id conv-26 --limit 10
-    uv run python eval/eval_qa_accuracy.py --output eval/results/qa_accuracy_results.json
+    uv run python eval/eval_qa_accuracy.py --conv-ids conv-26 conv-30 --limit 10
+    uv run python eval/eval_qa_accuracy.py --output eval/results/qa_accuracy_benchmark_results.json
 
 Reads .env.development for configuration.
 Requires memories to be ingested first via ingest_locomo_production.py.
@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from datetime import UTC, datetime
+from itertools import zip_longest
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -39,8 +40,8 @@ sys.path.insert(0, str(_repo_root / "backend" / "services" / "retrieval" / "src"
 sys.path.insert(0, str(_repo_root / "backend" / "services" / "memory" / "src"))
 
 from config.settings import Settings  # noqa: E402
-from llm.embeddings.gemini import GeminiEmbeddingService  # noqa: E402
-from llm.generation.gemini import GeminiService  # noqa: E402
+from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
+from llm.generation.azure import AzureService  # noqa: E402
 from retrieval.context import ContextBuilder  # noqa: E402
 from retrieval.retriever import MemoryRetriever  # noqa: E402
 from storage.qdrant import QdrantMemoryStore  # noqa: E402
@@ -64,11 +65,25 @@ CATEGORIES = {
     4: "Open-domain",
 }
 
-ANSWER_SYSTEM_PROMPT = """You are an intelligent memory assistant.
+ANSWER_SYSTEM_PROMPT = """You are an intelligent memory assistant
+tasked with retrieving accurate information from conversation memories.
+
+Instructions:
+1. Carefully analyze all provided memories
+2. Pay special attention to any timestamps or dates in the memories
+3. If the question asks about a specific event or fact, look for
+   direct evidence in the memories
+4. If memories contain contradictory information, prioritize the
+   most recent memory
+5. If there is a question about time references (like "last year",
+   "two months ago", etc.), calculate the actual date based on
+   the memory timestamp
+6. Always convert relative time references to specific dates,
+   months, or years based on the memory content
+7. The answer should be less than 5-6 words
+
 Answer the question using ONLY the provided memories.
-Be concise — answer in 5 words or fewer if possible.
-If the memories do not contain enough information to answer,
-say "I don't know"."""
+If the memories do not contain enough information, say "I don't know"."""
 
 JUDGE_PROMPT = """Your task is to label an answer as CORRECT or WRONG.
 
@@ -161,10 +176,10 @@ def parse_args() -> argparse.Namespace:
         description="End-to-end QA accuracy evaluation on LoCoMo dataset.",
     )
     parser.add_argument(
-        "--conv-id",
-        type=str,
-        default="conv-30",
-        help="LoCoMo conversation sample_id (default: conv-30)",
+        "--conv-ids",
+        nargs="+",
+        default=["conv-26", "conv-30"],
+        help="LoCoMo conversation sample_ids to evaluate (default: conv-26 conv-30)",
     )
     parser.add_argument(
         "--limit",
@@ -175,7 +190,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=str,
-        default="eval/results/qa_accuracy_results.json",
+        default="eval/results/qa_accuracy_benchmark_results.json",
         help="Path to save results JSON",
     )
     return parser.parse_args()
@@ -183,7 +198,6 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
-    eval_user_id = f"locomo_eval_{args.conv_id.replace('-', '_')}"
     output_path = Path(args.output)
 
     check_env()
@@ -192,18 +206,20 @@ async def main() -> None:
     settings = Settings()
     store = QdrantMemoryStore.from_settings(settings)
 
-    embedding_service = GeminiEmbeddingService(
-        api_key=settings.google_api_key.get_secret_value(),
-        model=settings.embedding_model,
+    embedding_service = AzureEmbeddingService(
+        api_key=settings.azure_openai_api_key.get_secret_value(),
+        endpoint=settings.azure_openai_endpoint,
+        deployment="text-embedding-3-small",
     )
     retriever = MemoryRetriever(
         store=store,
         embedding_service=embedding_service,
-        top_k=10,
+        top_k=30,
     )
-    llm_service = GeminiService(
-        api_key=settings.google_api_key.get_secret_value(),
-        model=settings.memory_extraction_model,
+    llm_service = AzureService(
+        api_key=settings.azure_openai_api_key.get_secret_value(),
+        endpoint=settings.azure_openai_endpoint,
+        deployment=settings.azure_openai_deployment,
     )
     azure_client = AsyncAzureOpenAI(
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
@@ -214,22 +230,38 @@ async def main() -> None:
     )
     judge_model = os.environ["EVAL_LLM_JUDGE_MODEL"]
 
-    # Load conversation and collect QA entries
+    # Load dataset
     data_path = Path(__file__).resolve().parent / "data" / "locomo10.json"
     with open(data_path) as f:
         dataset: list[dict] = json.load(f)
 
-    conv_entry: dict | None = None
-    for entry in dataset:
-        if entry["sample_id"] == args.conv_id:
-            conv_entry = entry
-            break
+    # Collect QA entries from all specified conversations
+    qa_entries: list[dict] = []
+    for conv_id in args.conv_ids:
+        eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
 
-    if conv_entry is None:
-        print(f"ERROR: No conversation with sample_id={args.conv_id!r} found.")
-        sys.exit(1)
+        conv_entry: dict | None = None
+        for entry in dataset:
+            if entry["sample_id"] == conv_id:
+                conv_entry = entry
+                break
 
-    qa_entries = collect_qa_entries(conv_entry)
+        if conv_entry is None:
+            print(f"ERROR: No conversation with sample_id={conv_id!r} found.")
+            sys.exit(1)
+
+        speaker_a: str = conv_entry["conversation"]["speaker_a"]
+        speaker_b: str = conv_entry["conversation"]["speaker_b"]
+        speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
+        speaker_b_user_id = f"{eval_user_id}_{speaker_b.lower().replace(' ', '_')}"
+
+        entries = collect_qa_entries(conv_entry)
+        for e in entries:
+            e["conv_id"] = conv_id
+            e["speaker_a_user_id"] = speaker_a_user_id
+            e["speaker_b_user_id"] = speaker_b_user_id
+        qa_entries.extend(entries)
+
     print(f"Total QA entries (categories 1-4): {len(qa_entries)}")
 
     if args.limit is not None:
@@ -238,6 +270,24 @@ async def main() -> None:
 
     # Warm up collection
     await store._ensure_collection()
+
+    # Remove known noise facts that corrupt retrieval
+    for conv_id in args.conv_ids:
+        eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
+        conv_entry = next((e for e in dataset if e["sample_id"] == conv_id), None)
+        if conv_entry is None:
+            continue
+        speaker_a = conv_entry["conversation"]["speaker_a"]
+        speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
+        all_facts = await store.list_all(speaker_a_user_id)
+        noise_facts = [
+            f for f in all_facts
+            if "linked to this conversation" in f.content.lower()
+        ]
+        for nf in noise_facts:
+            await store.delete(nf.id, speaker_a_user_id)
+        if noise_facts:
+            print(f"Removed {len(noise_facts)} noise facts from {speaker_a_user_id}")
 
     context_builder = ContextBuilder()
 
@@ -248,12 +298,26 @@ async def main() -> None:
         question = entry["question"]
         gold_answer = entry["answer"]
         category = entry["category"]
+        entry_speaker_a_user_id = entry["speaker_a_user_id"]
+        entry_speaker_b_user_id = entry["speaker_b_user_id"]
 
-        # Retrieve memories
-        memories = await retriever.retrieve(
+        # Retrieve memories from both speakers and merge
+        memories_a = await retriever.retrieve(
             query=question,
-            user_id=eval_user_id,
+            user_id=entry_speaker_a_user_id,
         )
+        memories_b = await retriever.retrieve(
+            query=question,
+            user_id=entry_speaker_b_user_id,
+        )
+
+        seen_contents: set[str] = set()
+        merged: list = []
+        for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
+            if fact.content not in seen_contents:
+                seen_contents.add(fact.content)
+                merged.append(fact)
+        memories = merged[:30]
 
         if not memories:
             per_pair_results.append(
@@ -262,6 +326,7 @@ async def main() -> None:
                     "gold_answer": gold_answer,
                     "generated_answer": "I don't know",
                     "category": category,
+                    "conv_id": entry["conv_id"],
                     "memories_retrieved": [],
                     "label": "WRONG",
                 }
@@ -293,6 +358,7 @@ async def main() -> None:
                 "gold_answer": gold_answer,
                 "generated_answer": generated_answer,
                 "category": category,
+                "conv_id": entry["conv_id"],
                 "memories_retrieved": [fact.content for fact in memories],
                 "label": label,
             }
@@ -319,7 +385,7 @@ async def main() -> None:
         }
 
     # Print summary
-    print(f"\nQA Accuracy Evaluation ({args.conv_id})")
+    print(f"\nQA Accuracy Evaluation ({', '.join(args.conv_ids)})")
     print("\u2500" * 34)
     print(f"QA pairs evaluated: {n_evaluated}")
     print(f"Overall accuracy: {overall_accuracy:.1%} ({n_correct}/{n_evaluated} CORRECT)")
@@ -334,8 +400,7 @@ async def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output = {
         "metadata": {
-            "conv_id": args.conv_id,
-            "eval_user_id": eval_user_id,
+            "conv_ids": args.conv_ids,
             "limit": args.limit,
             "timestamp": datetime.now(tz=UTC).isoformat(),
         },

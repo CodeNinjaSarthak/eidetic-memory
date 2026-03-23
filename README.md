@@ -1,31 +1,114 @@
 # Eidetic Memory
 
-![CI](https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg)
-![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue)
-![License](https://img.shields.io/badge/license-Apache%202.0-green)
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.13%2B-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" />
+  <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
+  <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
+  <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
+</p>
 
-Production-ready implementation of the Mem0 paper — scalable long-term memory for AI agents.
+<p align="center">
+  <strong>Long-term memory for AI agents.</strong><br/>
+  Extracts facts from conversations, evolves them over time,
+  and retrieves the right context when it matters.
+</p>
 
-**Paper:** [Building Production-Ready AI Agents with Scalable Long-Term Memory (arXiv:2504.19413v1)](https://arxiv.org/abs/2504.19413v1)
+---
 
 ## Demo
 
-<!-- Add demo GIF here -->
+> 🎥 Demo GIF coming soon — chat UI with live memory extraction
 
-**Chat interface** — conversations stream via SSE while the memory pipeline extracts and evolves facts in the background.
+<!-- Replace with actual demo GIF -->
 
-**Memory browser** — browse, search, and inspect all stored memories with importance scores and timestamps.
+---
 
-## What This Implements
+## How It Works
 
-- **Fact extraction** — new conversation pairs are processed by `ExtractionPipeline` to produce candidate facts
-- **Memory evolution** — each candidate is compared against existing memories by `EvolutionEngine`, which decides ADD, UPDATE, DELETE, or NOOP via tool calling
-- **Semantic retrieval** — `MemoryRetriever` embeds the query, searches Qdrant for top-k matches, and optionally reranks by importance score
-- **Lifecycle scoring** — `LifecycleManager` computes recency-weighted scores to surface the most relevant memories
+Every conversation turn passes through a four-stage pipeline:
+
+```
+User message
+│
+▼
+┌─────────────────┐
+│ ExtractionPipeline │  LLM extracts candidate facts from the conversation pair
+└────────┬────────┘
+         │  candidates[]
+         ▼
+┌─────────────────┐
+│  EvolutionEngine  │  Compares each candidate against existing memories
+└────────┬────────┘  → ADD / UPDATE / DELETE / NOOP
+         │
+         ▼
+┌─────────────────┐
+│  QdrantMemoryStore│  Executes operations, stores embeddings + payloads
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  MemoryRetriever  │  Embeds query, searches Qdrant, reranks by importance
+└─────────────────┘
+         │
+         ▼
+Retrieved context → injected into LLM system prompt
+```
+
+---
+
+## Features
+
+- **Fact extraction** — identifies atomic facts from conversation pairs using LLM tool calling
+- **Memory evolution** — decides ADD, UPDATE, DELETE, or NOOP by comparing candidates against semantically similar existing memories
+- **Importance scoring** — recency × frequency scoring surfaces the most relevant memories at retrieval time
+- **Multi-LLM** — plug in Claude, Gemini, Azure OpenAI, or Groq with a single env var change
+- **Async throughout** — every I/O operation is async; no blocking calls anywhere in the stack
+- **Chat UI** — Next.js frontend with live memory extraction and a memory browser
+
+---
+
+## Evaluation
+
+Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) —
+long-form multi-session conversations with QA pairs across 4 categories.
+
+### Component accuracy
+
+| Metric | Score | Details |
+|--------|-------|---------|
+| Fact extraction recall | **95.0%** | n=100, QA pairs with evidence |
+| Fact extraction precision | **58.6%** | Relevant facts / total extracted |
+| Conflict resolution accuracy | **100%** | 26 test cases (ADD/UPDATE/DELETE/NOOP) |
+
+### Retrieval accuracy (LoCoMo, n=100)
+
+| K | Hit@K |
+|---|-------|
+| 1 | 11% |
+| 5 | 25% |
+| 10 | 38% |
+| 20 | **56%** |
+
+### End-to-end QA accuracy (LoCoMo conv-30, n=81)
+
+| Category | Accuracy |
+|----------|----------|
+| Temporal | 15.4% |
+| Open-domain | 20.5% |
+| Single-hop | 9.1% |
+| **Overall** | **14.8%** |
+
+> LoCoMo is a challenging multi-party benchmark designed for human-to-human
+> conversations. The system was designed for user/assistant pairs — the
+> end-to-end numbers reflect the domain gap, not production performance.
+
+---
 
 ## Quick Start
 
-**Prerequisites:** Python 3.13+, Node 18+, [uv](https://docs.astral.sh/uv/), a [Qdrant Cloud](https://qdrant.tech/) account, and a Google API key (for Gemini).
+**Prerequisites:** Python 3.13+, Node 18+, [uv](https://docs.astral.sh/uv/),
+[Qdrant Cloud](https://qdrant.tech/) account, Google API key.
 
 ```bash
 # 1. Clone and install
@@ -33,32 +116,31 @@ git clone https://github.com/CodeNinjaSarthak/eidetic-memory.git
 cd eidetic-memory
 uv sync --all-packages
 
-# 2. Copy the env template
+# 2. Configure
 cp .env.development.example .env.development
+# Fill in: GOOGLE_API_KEY, QDRANT_URL, QDRANT_API_KEY
 
-# 3. Fill in required keys
-#    GOOGLE_API_KEY   — from Google AI Studio
-#    QDRANT_URL       — from Qdrant Cloud dashboard
-#    QDRANT_API_KEY   — from Qdrant Cloud dashboard
-
-# 4. Start the backend
+# 3. Start backend
 make run
 
-# 5. Start the frontend (separate terminal)
+# 4. Start frontend (separate terminal)
 make frontend-install && make frontend-dev
 ```
 
-The API runs at `http://localhost:8000` and the UI at `http://localhost:3000`.
+Backend: `http://localhost:8000` · Frontend: `http://localhost:3000`
 
-## API Reference
+---
 
-| Method   | Path                  | Description                |
-|----------|-----------------------|----------------------------|
-| `POST`   | `/memories/`          | Extract and store facts    |
-| `POST`   | `/memories/search`    | Semantic similarity search |
-| `GET`    | `/memories/{user_id}` | List all memories          |
-| `DELETE` | `/memories/{memory_id}` | Delete a memory          |
-| `GET`    | `/health`             | Health check               |
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/memories/` | Extract and store facts from a conversation turn |
+| `POST` | `/memories/search` | Semantic similarity search |
+| `GET` | `/memories/{user_id}` | List all memories for a user |
+| `DELETE` | `/memories/{memory_id}` | Delete a memory |
+| `POST` | `/chat/` | Memory-augmented chat turn |
+| `GET` | `/health` | Health check |
 
 ### Extract memories
 
@@ -76,11 +158,10 @@ curl -X POST http://localhost:8000/memories/ \
     },
     "previous_message": {
       "role": "assistant",
-      "content": "That sounds exciting! Tell me more about the move.",
+      "content": "That sounds exciting! Tell me more.",
       "user_id": "user-1",
       "session_id": "session-1"
-    },
-    "conversation_summary": null
+    }
   }'
 ```
 
@@ -89,113 +170,82 @@ curl -X POST http://localhost:8000/memories/ \
 ```bash
 curl -X POST http://localhost:8000/memories/search \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "Where does the user live?",
-    "user_id": "user-1",
-    "top_k": 5
-  }'
+  -d '{"query": "Where does the user live?", "user_id": "user-1", "top_k": 5}'
 ```
+
+---
 
 ## Configuration
 
-All configuration is loaded from `.env.development` via a single `Settings` class.
-
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LLM_PROVIDER` | Yes | `claude` | LLM backend: `claude`, `gemini`, `azure`, or `groq` |
-| `ANTHROPIC_API_KEY` | When provider=claude | — | Anthropic API key |
-| `GOOGLE_API_KEY` | When provider=gemini | — | Google AI API key (also used for embeddings) |
-| `GROQ_API_KEY` | When provider=groq | — | Groq API key |
-| `AZURE_OPENAI_API_KEY` | When provider=azure | — | Azure OpenAI API key |
-| `AZURE_OPENAI_ENDPOINT` | When provider=azure | — | Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_DEPLOYMENT` | When provider=azure | — | Azure OpenAI deployment name |
+| `LLM_PROVIDER` | Yes | `claude` | `claude` · `gemini` · `azure` · `groq` |
+| `ANTHROPIC_API_KEY` | If claude | — | Anthropic API key |
+| `GOOGLE_API_KEY` | If gemini | — | Google AI key — also used for embeddings |
+| `GROQ_API_KEY` | If groq | — | Groq API key |
+| `AZURE_OPENAI_API_KEY` | If azure | — | Azure OpenAI key |
+| `AZURE_OPENAI_ENDPOINT` | If azure | — | Azure endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT` | If azure | — | Deployment name |
 | `QDRANT_URL` | Yes | — | Qdrant instance URL |
-| `QDRANT_API_KEY` | No | — | Qdrant API key (required for Qdrant Cloud) |
-| `QDRANT_COLLECTION_NAME` | No | `eidetic_memories` | Qdrant collection name |
-| `EMBEDDING_MODEL` | No | `gemini-embedding-exp-03-07` | Embedding model name |
-| `EMBEDDING_DIMENSION` | No | `768` | Embedding vector dimension |
-| `MEMORY_EXTRACTION_MODEL` | No | `gemini-2.0-flash` | Model used for fact extraction and evolution |
-| `RECENCY_WINDOW` | No | `10` | Number of recent messages considered (paper param m) |
-| `SIMILARITY_TOP_K` | No | `10` | Top-k results for similarity search (paper param s) |
-| `API_HOST` | No | `0.0.0.0` | API server bind address |
+| `QDRANT_API_KEY` | No | — | Required for Qdrant Cloud |
+| `QDRANT_COLLECTION_NAME` | No | `eidetic_memories` | Collection name |
+| `EMBEDDING_MODEL` | No | `gemini-embedding-exp-03-07` | Embedding model |
+| `EMBEDDING_DIMENSION` | No | `768` | Vector dimension |
+| `MEMORY_EXTRACTION_MODEL` | No | `gemini-2.0-flash` | Extraction + evolution model |
+| `RECENCY_WINDOW` | No | `10` | Recent messages window size |
+| `SIMILARITY_TOP_K` | No | `10` | Top-k for similarity search |
 | `API_PORT` | No | `8000` | API server port |
-| `API_ENV` | No | `development` | Environment: `development`, `production`, or `test` |
-| `EVAL_LLM_JUDGE_MODEL` | No | `gemini-2.0-flash` | Model for evaluation runs (not needed for normal use) |
 
-## LLM Providers
-
-| Provider | Required Env Vars |
-|----------|------------------|
-| `claude` | `ANTHROPIC_API_KEY` |
-| `gemini` | `GOOGLE_API_KEY` |
-| `groq` | `GROQ_API_KEY` |
-| `azure` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` |
-
-**Example: switching to Groq**
+**Switching to Groq:**
 
 ```bash
-# In .env.development, change two variables:
 LLM_PROVIDER=groq
-GROQ_API_KEY=gsk_your_key_here
-# Optionally set the extraction model:
+GROQ_API_KEY=gsk_...
 MEMORY_EXTRACTION_MODEL=llama-3.3-70b-versatile
 ```
 
-## Development
-
-### Make commands
-
-| Command | Description |
-|---------|-------------|
-| `make install` | Install all packages (`uv sync --all-packages`) |
-| `make sync` | Same as install |
-| `make lint` | Run ruff linter |
-| `make format` | Run ruff formatter |
-| `make lint-fix` | Auto-fix lint issues |
-| `make test` | Run pytest |
-| `make run` | Start API server with hot reload |
-| `make dev` | Copy env template and print reminder |
-| `make check` | Lint + test in one command |
-| `make frontend-install` | Install frontend dependencies |
-| `make frontend-dev` | Start Next.js dev server |
-| `make frontend-build` | Build frontend for production |
-
-### Running tests
-
-```bash
-make test
-```
-
-Tests follow Google-style testing: behavior-focused, one assertion per failure reason, no mocking unless external I/O.
-
-### Adding a new LLM provider
-
-1. Implement `AbstractLLMService` in a new file under `backend/services/llm/src/llm/generation/`
-2. Register the provider in `settings.py` and `dependencies.py`
-3. Export from `llm/__init__.py` and add tests
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full step-by-step guide.
+---
 
 ## Project Structure
 
 ```
 eidetic-memory/
 ├── backend/
-│   ├── apps/
-│   │   └── api/              # FastAPI HTTP layer — routes, schemas, dependencies
+│   ├── apps/api/              # FastAPI routes, schemas, DI
 │   ├── services/
-│   │   ├── llm/              # LLM provider adapters (Claude, Gemini, Azure, Groq)
-│   │   ├── memory/           # Core pipeline: extraction, evolution, lifecycle
-│   │   ├── retrieval/        # Semantic search and context building
-│   │   └── storage/          # Qdrant vector store abstraction
-│   └── packages/
-│       └── config/           # Shared pydantic-settings, single source of truth
-├── frontend/                 # Next.js chat UI and memory browser
-├── eval/                     # LOCOMO + synthetic evaluation harness
-├── Makefile                  # Dev commands
-├── pyproject.toml            # uv workspace root
-└── .env.development.example  # Env var template
+│   │   ├── llm/               # Provider adapters (Claude, Gemini, Azure, Groq)
+│   │   ├── memory/            # Extraction, evolution, lifecycle pipeline
+│   │   ├── retrieval/         # Semantic search + context building
+│   │   └── storage/           # Qdrant abstraction
+│   └── packages/config/       # Shared settings — single source of truth
+├── frontend/                  # Next.js chat UI + memory browser
+├── eval/                      # LoCoMo evaluation harness + scripts
+├── Makefile
+└── pyproject.toml             # uv workspace root
 ```
+
+**Dependency graph** (no circular deps allowed):
+
+```
+config → storage → llm → retrieval → memory → api
+```
+
+---
+
+## Development
+
+```bash
+make test        # run 142 tests
+make lint        # ruff check
+make format      # ruff format
+make check       # lint + test
+make run         # start API with hot reload
+```
+
+Tests follow Google-style: behavior-focused, one reason to fail,
+no mocking unless external I/O. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
 
 ## License
 
