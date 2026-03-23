@@ -9,7 +9,7 @@ Ingest a LoCoMo conversation through the real MemoryManager pipeline.
 
 Usage:
     uv run python eval/ingest_locomo_production.py
-    uv run python eval/ingest_locomo_production.py --conv-id conv-26
+    uv run python eval/ingest_locomo_production.py --conv-ids conv-26 conv-30
     uv run python eval/ingest_locomo_production.py --cleanup
     uv run python eval/ingest_locomo_production.py --dry-run
 
@@ -38,8 +38,11 @@ sys.path.insert(0, str(_repo_root / "backend" / "services" / "retrieval" / "src"
 sys.path.insert(0, str(_repo_root / "backend" / "services" / "memory" / "src"))
 
 from config.settings import Settings  # noqa: E402
-from llm.embeddings.gemini import GeminiEmbeddingService  # noqa: E402
+from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
+from llm.generation.azure import AzureService  # noqa: E402
+from llm.generation.claude import ClaudeService  # noqa: E402
 from llm.generation.gemini import GeminiService  # noqa: E402
+from llm.generation.groq import GroqService  # noqa: E402
 from memory.manager import MemoryManager  # noqa: E402
 from memory.models.conversation import ConversationPair, Message  # noqa: E402
 from storage.qdrant import QdrantMemoryStore  # noqa: E402
@@ -48,9 +51,20 @@ from storage.qdrant import QdrantMemoryStore  # noqa: E402
 env_path = _repo_root / ".env.development"
 load_dotenv(env_path)
 
-REQUIRED_VARS = ["GOOGLE_API_KEY", "QDRANT_URL"]
+REQUIRED_VARS = ["GOOGLE_API_KEY", "QDRANT_URL", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
 
 SESSION_KEY_RE = re.compile(r"^session_(\d+)$")
+
+
+def replace_user_with_speaker(content: str, speaker_name: str) -> str:
+    """Replace generic 'User'/'user' with the actual speaker name.
+
+    Only matches 'The user'/'The User' anywhere, or 'User'/'user' at string start.
+    Avoids corrupting 'user' when it appears as a common noun mid-sentence.
+    """
+    content = re.sub(r"\bThe [Uu]ser\b", speaker_name, content)
+    content = re.sub(r"^[Uu]ser\b", speaker_name, content)
+    return content
 
 
 def check_env() -> None:
@@ -61,17 +75,21 @@ def check_env() -> None:
         print("Set them in .env.development and re-run.")
         sys.exit(1)
 
+    if not os.environ.get("AZURE_OPENAI_DEPLOYMENT") and os.environ.get("LLM_PROVIDER") == "azure":
+        print("ERROR: AZURE_OPENAI_DEPLOYMENT required when LLM_PROVIDER=azure")
+        sys.exit(1)
+
 
 # ── Helpers ──────────────────────────────────────────────────
 def load_conversation(conv_id: str) -> dict:
-    """Load locomo10.json and return the conversation matching conv_id."""
+    """Load locomo10.json and return the full entry matching conv_id."""
     data_path = Path(__file__).resolve().parent / "data" / "locomo10.json"
     with open(data_path) as f:
         dataset: list[dict] = json.load(f)
 
     for entry in dataset:
         if entry["sample_id"] == conv_id:
-            return entry["conversation"]
+            return entry
 
     print(f"ERROR: No conversation with sample_id={conv_id!r} found.")
     sys.exit(1)
@@ -105,12 +123,39 @@ def extract_sessions(conversation: dict) -> list[dict]:
     return sessions
 
 
-async def cleanup(store: QdrantMemoryStore, eval_user_id: str) -> None:
-    """Delete all memories for the eval user."""
-    facts = await store.list_all(eval_user_id)
-    for fact in facts:
-        await store.delete(fact.id, eval_user_id)
-    print(f"Deleted {len(facts)} memories for {eval_user_id}")
+def _build_llm_service(settings: Settings):
+    """Build the LLM service based on the configured provider."""
+    match settings.llm_provider:
+        case "claude":
+            return ClaudeService(
+                api_key=settings.anthropic_api_key.get_secret_value(),
+                model=settings.memory_extraction_model,
+            )
+        case "gemini":
+            return GeminiService(
+                api_key=settings.google_api_key.get_secret_value(),
+                model=settings.memory_extraction_model,
+            )
+        case "azure":
+            return AzureService(
+                api_key=settings.azure_openai_api_key.get_secret_value(),
+                endpoint=settings.azure_openai_endpoint,
+                deployment=settings.azure_openai_deployment,
+            )
+        case "groq":
+            return GroqService(
+                api_key=settings.groq_api_key.get_secret_value(),
+                model=settings.memory_extraction_model,
+            )
+
+
+async def cleanup(store: QdrantMemoryStore, user_ids: list[str]) -> None:
+    """Delete all memories for the given user IDs."""
+    for user_id in user_ids:
+        facts = await store.list_all(user_id)
+        for fact in facts:
+            await store.delete(fact.id, user_id)
+        print(f"Deleted {len(facts)} memories for {user_id}")
 
 
 # ── Main ─────────────────────────────────────────────────────
@@ -120,10 +165,10 @@ def parse_args() -> argparse.Namespace:
         description="Ingest a LoCoMo conversation through the production MemoryManager pipeline.",
     )
     parser.add_argument(
-        "--conv-id",
-        type=str,
-        default="conv-30",
-        help="LoCoMo conversation sample_id to ingest (default: conv-30)",
+        "--conv-ids",
+        nargs="+",
+        default=["conv-26", "conv-30"],
+        help="LoCoMo conversation sample_ids to ingest (default: conv-26 conv-30)",
     )
     parser.add_argument(
         "--dry-run",
@@ -140,7 +185,6 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
-    eval_user_id = f"locomo_eval_{args.conv_id.replace('-', '_')}"
 
     check_env()
 
@@ -152,91 +196,143 @@ async def main() -> None:
     await store._ensure_collection()
 
     if args.cleanup:
-        await cleanup(store, eval_user_id)
+        for conv_id in args.conv_ids:
+            eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
+            conv_entry = load_conversation(conv_id)
+            conversation = conv_entry["conversation"]
+            speaker_a: str = conversation["speaker_a"]
+            speaker_b: str = conversation["speaker_b"]
+            speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
+            speaker_b_user_id = f"{eval_user_id}_{speaker_b.lower().replace(' ', '_')}"
+            await cleanup(store, [eval_user_id, speaker_a_user_id, speaker_b_user_id])
         return
 
-    embedding_service = GeminiEmbeddingService(
-        api_key=settings.google_api_key.get_secret_value(),
-        model=settings.embedding_model,
+    embedding_service = AzureEmbeddingService(
+        api_key=settings.azure_openai_api_key.get_secret_value(),
+        endpoint=settings.azure_openai_endpoint,
+        deployment="text-embedding-3-small",
     )
-    llm_service = GeminiService(
-        api_key=settings.google_api_key.get_secret_value(),
-        model=settings.memory_extraction_model,
-    )
+    llm_service = _build_llm_service(settings)
     manager = MemoryManager(
         store=store,
         embedding_service=embedding_service,
         llm_service=llm_service,
-        similarity_top_k=settings.similarity_top_k,
+        similarity_top_k=30,
     )
-
-    # Load conversation
-    conversation = load_conversation(args.conv_id)
-    sessions = extract_sessions(conversation)
-    print(f"Found {len(sessions)} sessions for {args.conv_id}")
-    print(f"Eval user ID: {eval_user_id}")
-
-    if args.dry_run:
-        print("\n── Dry run ────────────────────────────────────────")
 
     total_turns = 0
     total_facts = 0
 
-    for session in sessions:
-        session_id = session["session_id"]
-        session_datetime = session["session_datetime"]
-        session_turns = session["turns"]
-        session_facts = 0
+    for conv_id in args.conv_ids:
+        eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
+        conv_entry = load_conversation(conv_id)
+        conversation = conv_entry["conversation"]
+        speaker_a = conversation["speaker_a"]
+        speaker_b = conversation["speaker_b"]
+        speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
+        speaker_b_user_id = f"{eval_user_id}_{speaker_b.lower().replace(' ', '_')}"
 
-        for i in tqdm(
-            range(len(session_turns)),
-            desc=session_id,
-            unit="turn",
-            leave=True,
-        ):
-            if i == 0:
-                previous = Message(
-                    user_id=eval_user_id,
+        # Silent cleanup before ingesting to remove stale data
+        await cleanup(store, [eval_user_id, speaker_a_user_id, speaker_b_user_id])
+
+        print(f"\n── Ingesting {conv_id} ────────────────────────────────")
+
+        sessions = extract_sessions(conversation)
+        print(f"Found {len(sessions)} sessions for {conv_id}")
+        print(f"Eval user ID: {eval_user_id}")
+        print(f"Speaker A: {speaker_a} → {speaker_a_user_id}")
+        print(f"Speaker B: {speaker_b} → {speaker_b_user_id}")
+
+        if args.dry_run:
+            print("\n── Dry run ────────────────────────────────────────")
+
+        for session in sessions:
+            session_id = session["session_id"]
+            session_datetime = session["session_datetime"]
+            session_turns = session["turns"]
+            session_facts = 0
+            session_skipped = 0
+
+            for i in tqdm(
+                range(len(session_turns)),
+                desc=session_id,
+                unit="turn",
+                leave=True,
+            ):
+                # Route turn to the correct speaker's user ID
+                if session_turns[i]["speaker"] == speaker_a:
+                    turn_user_id = speaker_a_user_id
+                    speaker_name = speaker_a
+                else:
+                    turn_user_id = speaker_b_user_id
+                    speaker_name = speaker_b
+
+                if i == 0:
+                    previous_user_id = turn_user_id
+                else:
+                    prev_speaker = session_turns[i - 1]["speaker"]
+                    previous_user_id = speaker_a_user_id if prev_speaker == speaker_a else speaker_b_user_id
+
+                if i == 0:
+                    previous = Message(
+                        user_id=previous_user_id,
+                        session_id=session_id,
+                        role="user",
+                        content="[start of conversation]",
+                    )
+                else:
+                    previous = Message(
+                        user_id=previous_user_id,
+                        session_id=session_id,
+                        role="user",
+                        content=session_turns[i - 1]["text"],
+                    )
+
+                current = Message(
+                    user_id=turn_user_id,
                     session_id=session_id,
                     role="user",
-                    content="[start of conversation]",
-                )
-            else:
-                previous = Message(
-                    user_id=eval_user_id,
-                    session_id=session_id,
-                    role="user",
-                    content=session_turns[i - 1]["text"],
+                    content=f"[Session date: {session_datetime}] {session_turns[i]['text']}",
                 )
 
-            current = Message(
-                user_id=eval_user_id,
-                session_id=session_id,
-                role="user",
-                content=f"[Session date: {session_datetime}] {session_turns[i]['text']}",
-            )
+                pair = ConversationPair(current=current, previous=previous)
 
-            pair = ConversationPair(current=current, previous=previous)
+                if args.dry_run:
+                    tqdm.write(f"  [{session_id}] turn {i}: {session_turns[i]['text'][:80]}...")
+                    continue
 
-            if args.dry_run:
-                tqdm.write(f"  [{session_id}] turn {i}: {session_turns[i]['text'][:80]}...")
-                continue
+                try:
+                    facts = await manager.add_memory(
+                        pair,
+                        user_id=turn_user_id,
+                        session_id=session_id,
+                    )
+                except Exception as e:
+                    if "content_filter" in str(e) or "content management policy" in str(e):
+                        tqdm.write(
+                            f"  [{session_id}] turn {i}: skipped (Azure content filter)"
+                        )
+                        session_skipped += 1
+                        continue
+                    raise
 
-            facts = await manager.add_memory(
-                pair,
-                user_id=eval_user_id,
-                session_id=session_id,
-            )
-            session_facts += len(facts)
+                # Replace generic "User"/"user" references with actual speaker name
+                for fact in facts:
+                    replaced = replace_user_with_speaker(fact.content, speaker_name)
+                    if replaced != fact.content:
+                        fact.content = replaced
+                        await store.upsert(fact)
 
-        total_turns += len(session_turns)
-        total_facts += session_facts
-        print(f"  {session_id} ({len(session_turns)} turns): {session_facts} facts extracted")
+                session_facts += len(facts)
+
+            total_turns += len(session_turns)
+            total_facts += session_facts
+            print(f"  {session_id} ({len(session_turns)} turns): {session_facts} facts extracted"
+                  + (f", {session_skipped} turns skipped (content filter)" if session_skipped else ""))
 
     # Final summary
     print("\n── Summary ────────────────────────────────────────")
     print(f"Total: {total_turns} turns processed, {total_facts} facts extracted")
-    print(f"User ID: {eval_user_id}")
 
 
 if __name__ == "__main__":
