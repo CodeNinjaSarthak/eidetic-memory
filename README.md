@@ -90,18 +90,24 @@ long-form multi-session conversations with QA pairs across 4 categories.
 | 10 | 38% |
 | 20 | **56%** |
 
-### End-to-end QA accuracy (LoCoMo conv-30, n=81)
+### End-to-end QA accuracy (LoCoMo conv-26 + conv-30, n=233)
 
 | Category | Accuracy |
 |----------|----------|
-| Temporal | 15.4% |
-| Open-domain | 20.5% |
-| Single-hop | 9.1% |
-| **Overall** | **14.8%** |
+| Temporal | **63.5%** |
+| Open-domain | 55.3% |
+| Single-hop | 37.2% |
+| Multi-hop | 23.1% |
+| **Overall** | **52.4%** |
+
+| Run | Score | Details |
+|-----|-------|---------|
+| Baseline | 14.8% | Gemini, conv-30 only, top-k=10, n=81 |
+| **Current** | **52.4%** | GPT-4o + Azure embeddings, conv-26+conv-30, top-k=30, n=233 |
 
 > LoCoMo is a challenging multi-party benchmark designed for human-to-human
-> conversations. The system was designed for user/assistant pairs — the
-> end-to-end numbers reflect the domain gap, not production performance.
+> conversations with per-speaker memory isolation. mem0 paper reports ~70% on
+> the same benchmark — the remaining gap is documented for the next milestone.
 
 ---
 
