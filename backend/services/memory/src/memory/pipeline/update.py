@@ -230,7 +230,8 @@ def _parse_batch_result(
             updates.append(noop)
             continue
 
-        memory_id = item.get("id") or None
+        raw_id = item.get("id")
+        memory_id = str(raw_id) if raw_id is not None and raw_id != "" else None
         updated_content = item.get("text") or None
 
         if operation == MemoryOperation.UPDATE and not updated_content:
