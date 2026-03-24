@@ -360,7 +360,7 @@ async def main() -> None:
                 user_id=entry_speaker_b_user_id,
             )
             # Merge second-pass results with first-pass, deduplicate
-            seen_contents2: set[str] = set(f.content for f in memories)
+            seen_contents2: set[str] = {f.content for f in memories}
             for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
                 if fact.content not in seen_contents2:
                     seen_contents2.add(fact.content)
