@@ -24,8 +24,11 @@ import json
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
+import openai
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -40,6 +43,7 @@ sys.path.insert(0, str(_repo_root / "backend" / "services" / "memory" / "src"))
 from config.settings import Settings  # noqa: E402
 from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
 from llm.generation.azure import AzureService  # noqa: E402
+from llm.generation.base import LLMError  # noqa: E402
 from llm.generation.claude import ClaudeService  # noqa: E402
 from llm.generation.gemini import GeminiService  # noqa: E402
 from llm.generation.groq import GroqService  # noqa: E402
@@ -54,6 +58,48 @@ load_dotenv(env_path)
 REQUIRED_VARS = ["GOOGLE_API_KEY", "QDRANT_URL", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"]
 
 SESSION_KEY_RE = re.compile(r"^session_(\d+)$")
+
+_RETRYABLE_ERRORS = (
+    asyncio.CancelledError,
+    httpx.ReadTimeout,
+    httpx.ConnectTimeout,
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    LLMError,  # Azure occasionally returns malformed JSON in tool calls
+)
+_MAX_RETRIES = 3
+_BACKOFF_SECONDS = [5, 15, 45]
+
+_CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints"
+_CHECKPOINT_FILE = _CHECKPOINT_DIR / "ingestion_progress.json"
+
+
+def load_checkpoint() -> dict:
+    """Load checkpoint file, returning empty state if it doesn't exist."""
+    if _CHECKPOINT_FILE.exists():
+        with open(_CHECKPOINT_FILE) as f:
+            return json.load(f)
+    return {"completed": [], "last_updated": None}
+
+
+def save_checkpoint(checkpoint: dict) -> None:
+    """Write checkpoint file with current timestamp."""
+    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    checkpoint["last_updated"] = datetime.now(UTC).isoformat()
+    with open(_CHECKPOINT_FILE, "w") as f:
+        json.dump(checkpoint, f, indent=2)
+
+
+def is_completed(checkpoint: dict, conv_id: str) -> bool:
+    """Check if a conversation has already been fully ingested."""
+    return conv_id in checkpoint.get("completed", [])
+
+
+def mark_completed(checkpoint: dict, conv_id: str) -> None:
+    """Mark a conversation as fully ingested and persist."""
+    if conv_id not in checkpoint["completed"]:
+        checkpoint["completed"].append(conv_id)
+    save_checkpoint(checkpoint)
 
 
 def replace_user_with_speaker(content: str, speaker_name: str) -> str:
@@ -186,6 +232,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Delete all memories for the eval user ID and exit",
     )
+    parser.add_argument(
+        "--no-checkpoint",
+        action="store_true",
+        help="Ignore checkpoint file and re-ingest all conversations from scratch",
+    )
     return parser.parse_args()
 
 
@@ -226,115 +277,163 @@ async def main() -> None:
         similarity_top_k=30,
     )
 
-    total_turns = 0
-    total_facts = 0
+    checkpoint = load_checkpoint() if not args.no_checkpoint else {"completed": [], "last_updated": None}
+    semaphore = asyncio.Semaphore(2)
 
-    for conv_id in args.conv_ids:
-        eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
-        conv_entry = load_conversation(conv_id)
-        conversation = conv_entry["conversation"]
-        speaker_a = conversation["speaker_a"]
-        speaker_b = conversation["speaker_b"]
-        speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
-        speaker_b_user_id = f"{eval_user_id}_{speaker_b.lower().replace(' ', '_')}"
+    async def ingest_conversation(conv_id: str, index: int) -> tuple[int, int]:
+        """Ingest a single conversation, returning (turns, facts)."""
+        async with semaphore:
+            if is_completed(checkpoint, conv_id):
+                tqdm.write(f"\n── Skipping {conv_id} (already completed) ──────────────")
+                return 0, 0
 
-        # Silent cleanup before ingesting to remove stale data
-        await cleanup(store, [eval_user_id, speaker_a_user_id, speaker_b_user_id])
+            eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
+            conv_entry = load_conversation(conv_id)
+            conversation = conv_entry["conversation"]
+            speaker_a = conversation["speaker_a"]
+            speaker_b = conversation["speaker_b"]
+            speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
+            speaker_b_user_id = f"{eval_user_id}_{speaker_b.lower().replace(' ', '_')}"
 
-        print(f"\n── Ingesting {conv_id} ────────────────────────────────")
+            # Silent cleanup before ingesting to remove stale data
+            await cleanup(store, [eval_user_id, speaker_a_user_id, speaker_b_user_id])
 
-        sessions = extract_sessions(conversation)
-        print(f"Found {len(sessions)} sessions for {conv_id}")
-        print(f"Eval user ID: {eval_user_id}")
-        print(f"Speaker A: {speaker_a} → {speaker_a_user_id}")
-        print(f"Speaker B: {speaker_b} → {speaker_b_user_id}")
+            tqdm.write(f"\n── Ingesting {conv_id} ────────────────────────────────")
 
-        if args.dry_run:
-            print("\n── Dry run ────────────────────────────────────────")
+            sessions = extract_sessions(conversation)
+            tqdm.write(f"Found {len(sessions)} sessions for {conv_id}")
+            tqdm.write(f"Eval user ID: {eval_user_id}")
+            tqdm.write(f"Speaker A: {speaker_a} → {speaker_a_user_id}")
+            tqdm.write(f"Speaker B: {speaker_b} → {speaker_b_user_id}")
 
-        for session in sessions:
-            session_id = session["session_id"]
-            session_datetime = session["session_datetime"]
-            session_turns = session["turns"]
-            session_facts = 0
-            session_skipped = 0
+            if args.dry_run:
+                tqdm.write(f"\n── Dry run ────────────────────────────────────────")
 
-            for i in tqdm(
-                range(len(session_turns)),
-                desc=session_id,
-                unit="turn",
-                leave=True,
-            ):
-                # Route turn to the correct speaker's user ID
-                if session_turns[i]["speaker"] == speaker_a:
-                    turn_user_id = speaker_a_user_id
-                    speaker_name = speaker_a
-                else:
-                    turn_user_id = speaker_b_user_id
-                    speaker_name = speaker_b
+            conv_turns = 0
+            conv_facts = 0
 
-                if i == 0:
-                    previous_user_id = turn_user_id
-                else:
-                    prev_speaker = session_turns[i - 1]["speaker"]
-                    previous_user_id = speaker_a_user_id if prev_speaker == speaker_a else speaker_b_user_id
+            for session in sessions:
+                session_id = session["session_id"]
+                session_datetime = session["session_datetime"]
+                session_turns = session["turns"]
+                session_facts = 0
+                session_skipped = 0
 
-                if i == 0:
-                    previous = Message(
-                        user_id=previous_user_id,
-                        session_id=session_id,
-                        role="user",
-                        content="[start of conversation]",
-                    )
-                else:
-                    previous = Message(
-                        user_id=previous_user_id,
-                        session_id=session_id,
-                        role="user",
-                        content=session_turns[i - 1]["text"],
-                    )
+                for i in tqdm(
+                    range(len(session_turns)),
+                    desc=f"{conv_id}/{session_id}",
+                    unit="turn",
+                    leave=True,
+                    position=index,
+                ):
+                    # Route turn to the correct speaker's user ID
+                    if session_turns[i]["speaker"] == speaker_a:
+                        turn_user_id = speaker_a_user_id
+                        speaker_name = speaker_a
+                    else:
+                        turn_user_id = speaker_b_user_id
+                        speaker_name = speaker_b
 
-                current = Message(
-                    user_id=turn_user_id,
-                    session_id=session_id,
-                    role="user",
-                    content=f"[Session date: {session_datetime}] {session_turns[i]['text']}",
-                )
+                    if i == 0:
+                        previous_user_id = turn_user_id
+                    else:
+                        prev_speaker = session_turns[i - 1]["speaker"]
+                        previous_user_id = speaker_a_user_id if prev_speaker == speaker_a else speaker_b_user_id
 
-                pair = ConversationPair(current=current, previous=previous)
+                    if i == 0:
+                        previous = Message(
+                            user_id=previous_user_id,
+                            session_id=session_id,
+                            role="user",
+                            content="[start of conversation]",
+                        )
+                    else:
+                        previous = Message(
+                            user_id=previous_user_id,
+                            session_id=session_id,
+                            role="user",
+                            content=session_turns[i - 1]["text"],
+                        )
 
-                if args.dry_run:
-                    tqdm.write(f"  [{session_id}] turn {i}: {session_turns[i]['text'][:80]}...")
-                    continue
-
-                try:
-                    facts = await manager.add_memory(
-                        pair,
+                    current = Message(
                         user_id=turn_user_id,
                         session_id=session_id,
+                        role="user",
+                        content=f"[Session date: {session_datetime}] {session_turns[i]['text']}",
                     )
-                except Exception as e:
-                    if "content_filter" in str(e) or "content management policy" in str(e):
-                        tqdm.write(
-                            f"  [{session_id}] turn {i}: skipped (Azure content filter)"
-                        )
-                        session_skipped += 1
+
+                    pair = ConversationPair(current=current, previous=previous)
+
+                    if args.dry_run:
+                        tqdm.write(f"  [{session_id}] turn {i}: {session_turns[i]['text'][:80]}...")
                         continue
-                    raise
 
-                # Replace generic "User"/"user" references with actual speaker name
-                for fact in facts:
-                    replaced = replace_user_with_speaker(fact.content, speaker_name)
-                    if replaced != fact.content:
-                        fact.content = replaced
-                        await store.upsert(fact)
+                    skipped = False
+                    for attempt in range(1, _MAX_RETRIES + 1):
+                        try:
+                            facts = await manager.add_memory(
+                                pair,
+                                user_id=turn_user_id,
+                                session_id=session_id,
+                            )
+                            break
+                        except _RETRYABLE_ERRORS as e:
+                            # If it's a content filter error wrapped in LLMError, skip — don't retry
+                            if "content_filter" in str(e) or "content management policy" in str(e):
+                                tqdm.write(
+                                    f"  [{session_id}] turn {i}: skipped (Azure content filter)"
+                                )
+                                session_skipped += 1
+                                skipped = True
+                                break
+                            if attempt == _MAX_RETRIES:
+                                raise
+                            wait = _BACKOFF_SECONDS[attempt - 1]
+                            tqdm.write(
+                                f"  [{session_id}] turn {i}: {type(e).__name__}, "
+                                f"retrying in {wait}s (attempt {attempt}/{_MAX_RETRIES})"
+                            )
+                            await asyncio.sleep(wait)
+                        except Exception as e:
+                            if "content_filter" in str(e) or "content management policy" in str(e):
+                                tqdm.write(
+                                    f"  [{session_id}] turn {i}: skipped (Azure content filter)"
+                                )
+                                session_skipped += 1
+                                skipped = True
+                                break
+                            raise
+                    if skipped:
+                        continue
 
-                session_facts += len(facts)
+                    # Replace generic "User"/"user" references with actual speaker name
+                    for fact in facts:
+                        replaced = replace_user_with_speaker(fact.content, speaker_name)
+                        if replaced != fact.content:
+                            fact.content = replaced
+                            await store.upsert(fact)
 
-            total_turns += len(session_turns)
-            total_facts += session_facts
-            print(f"  {session_id} ({len(session_turns)} turns): {session_facts} facts extracted"
-                  + (f", {session_skipped} turns skipped (content filter)" if session_skipped else ""))
+                    session_facts += len(facts)
+
+                conv_turns += len(session_turns)
+                conv_facts += session_facts
+                tqdm.write(
+                    f"  {session_id} ({len(session_turns)} turns): {session_facts} facts extracted"
+                    + (f", {session_skipped} turns skipped (content filter)" if session_skipped else "")
+                )
+
+            # All sessions for this conv_id completed — mark checkpoint
+            if not args.dry_run:
+                mark_completed(checkpoint, conv_id)
+                tqdm.write(f"  ✓ Checkpoint saved for {conv_id}")
+
+            return conv_turns, conv_facts
+
+    results = await asyncio.gather(
+        *(ingest_conversation(conv_id, idx) for idx, conv_id in enumerate(args.conv_ids))
+    )
+    total_turns = sum(r[0] for r in results)
+    total_facts = sum(r[1] for r in results)
 
     # Final summary
     print("\n── Summary ────────────────────────────────────────")

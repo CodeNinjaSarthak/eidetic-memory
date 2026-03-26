@@ -6,16 +6,20 @@
 #                 "pydantic>=2.0.0"]
 # ///
 """
-End-to-end QA accuracy evaluation on LoCoMo dataset.
+RAG baseline QA accuracy evaluation on LoCoMo dataset.
+
+Instead of retrieving from per-speaker memory namespaces (the memory pipeline),
+this script searches raw conversation turns directly from the locomo_eval
+Qdrant collection. This answers: "what accuracy do you get with zero memory
+pipeline — just raw vector search on conversation turns?"
 
 Usage:
-    uv run python eval/eval_qa_accuracy.py
-    uv run python eval/eval_qa_accuracy.py --conv-ids conv-26 conv-30 --limit 10
-    uv run python eval/eval_qa_accuracy.py --output eval/results/qa_accuracy_benchmark_results.json
+    uv run python eval/eval_qa_rag_baseline.py
+    uv run python eval/eval_qa_rag_baseline.py --conv-ids conv-26 conv-30 --limit 10
+    uv run python eval/eval_qa_rag_baseline.py --output eval/results/qa_rag_baseline_results.json
 
 Reads .env.development for configuration.
-Requires memories to be ingested first via ingest_locomo_production.py.
-Retrieves memories, generates answers via Gemini, judges correctness via Azure OpenAI.
+Requires conversation turns to be ingested into locomo_eval via ingest_locomo.py.
 """
 
 import argparse
@@ -24,39 +28,31 @@ import json
 import os
 import sys
 from datetime import UTC, datetime
-from itertools import zip_longest
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, AzureOpenAI
+from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 from tqdm import tqdm
 
-# ── sys.path setup for backend imports ───────────────────────
-_repo_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_repo_root / "backend" / "packages" / "config" / "src"))
-sys.path.insert(0, str(_repo_root / "backend" / "services" / "storage" / "src"))
-sys.path.insert(0, str(_repo_root / "backend" / "services" / "llm" / "src"))
-sys.path.insert(0, str(_repo_root / "backend" / "services" / "retrieval" / "src"))
-sys.path.insert(0, str(_repo_root / "backend" / "services" / "memory" / "src"))
-
-from config.settings import Settings  # noqa: E402
-from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
-from llm.generation.azure import AzureService  # noqa: E402
-from retrieval.context import ContextBuilder  # noqa: E402
-from retrieval.retriever import MemoryRetriever  # noqa: E402
-from storage.qdrant import QdrantMemoryStore  # noqa: E402
-
 # ── Configuration ────────────────────────────────────────────
+_repo_root = Path(__file__).resolve().parent.parent
 env_path = _repo_root / ".env.development"
 load_dotenv(env_path)
 
 REQUIRED_VARS = [
-    "GOOGLE_API_KEY",
-    "QDRANT_URL",
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+    "AZURE_OPENAI_DEPLOYMENT",
     "EVAL_LLM_JUDGE_MODEL",
+    "QDRANT_URL",
+    "QDRANT_API_KEY",
 ]
+
+COLLECTION_NAME = "locomo_eval"
+TOP_K = 20
 
 CATEGORIES = {
     1: "Single-hop",
@@ -131,6 +127,60 @@ def collect_qa_entries(conversation_data: dict) -> list[dict]:
     return entries
 
 
+def embed_question(client: AzureOpenAI, text: str) -> list[float] | None:
+    """Embed a single question with 3-attempt exponential backoff."""
+    import time
+
+    for attempt in range(3):
+        try:
+            response = client.embeddings.create(
+                model=os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"],
+                input=[text],
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            if attempt == 2:
+                tqdm.write(f"  ERROR embedding after 3 attempts: {e}")
+                return None
+            wait = 2**attempt
+            tqdm.write(f"  Retrying embed in {wait}s (attempt {attempt + 1}/3): {e}")
+            time.sleep(wait)
+    return None
+
+
+def retrieve_raw_turns(
+    qdrant: QdrantClient,
+    openai_client: AzureOpenAI,
+    question: str,
+    conv_id: str,
+) -> list[str]:
+    """Embed question and search locomo_eval collection filtered by conv_id.
+
+    Returns up to TOP_K conversation turn texts.
+    """
+    vector = embed_question(openai_client, question)
+    if vector is None:
+        return []
+
+    response = qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        query=vector,
+        query_filter=Filter(
+            must=[
+                FieldCondition(
+                    key="sample_id",
+                    match=MatchValue(value=conv_id),
+                )
+            ]
+        ),
+        limit=TOP_K,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    return [p.payload["text"] for p in response.points]
+
+
 async def judge_answer(
     client: AsyncAzureOpenAI,
     model: str,
@@ -169,11 +219,19 @@ async def judge_answer(
     return "WRONG"
 
 
+def build_context_from_turns(turns: list[str]) -> str:
+    """Format retrieved conversation turns into a context block for the LLM."""
+    if not turns:
+        return ""
+    lines = [f"- {turn}" for turn in turns]
+    return "## Retrieved conversation turns\n" + "\n".join(lines)
+
+
 # ── Main ─────────────────────────────────────────────────────
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="End-to-end QA accuracy evaluation on LoCoMo dataset.",
+        description="RAG baseline QA accuracy evaluation on LoCoMo dataset.",
     )
     parser.add_argument(
         "--conv-ids",
@@ -190,14 +248,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=str,
-        default="eval/results/qa_accuracy_benchmark_results.json",
+        default="eval/results/qa_rag_baseline_results.json",
         help="Path to save results JSON",
-    )
-    parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=5,
-        help="Number of QA pairs to evaluate concurrently (default: 5)",
     )
     return parser.parse_args()
 
@@ -208,26 +260,19 @@ async def main() -> None:
 
     check_env()
 
-    # Wire services
-    settings = Settings()
-    store = QdrantMemoryStore.from_settings(settings)
-
-    embedding_service = AzureEmbeddingService(
-        api_key=settings.azure_openai_api_key.get_secret_value(),
-        endpoint=settings.azure_openai_endpoint,
-        deployment="text-embedding-3-small",
+    # Wire clients
+    qdrant = QdrantClient(
+        url=os.environ["QDRANT_URL"],
+        api_key=os.environ["QDRANT_API_KEY"],
     )
-    retriever = MemoryRetriever(
-        store=store,
-        embedding_service=embedding_service,
-        top_k=30,
+    openai_sync = AzureOpenAI(
+        api_key=os.environ["AZURE_OPENAI_API_KEY"],
+        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        api_version="2024-02-01",
+        timeout=30.0,
+        max_retries=0,
     )
-    llm_service = AzureService(
-        api_key=settings.azure_openai_api_key.get_secret_value(),
-        endpoint=settings.azure_openai_endpoint,
-        deployment=settings.azure_openai_deployment,
-    )
-    azure_client = AsyncAzureOpenAI(
+    azure_async = AsyncAzureOpenAI(
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_version="2024-02-01",
@@ -235,6 +280,7 @@ async def main() -> None:
         max_retries=0,
     )
     judge_model = os.environ["EVAL_LLM_JUDGE_MODEL"]
+    answer_model = os.environ["AZURE_OPENAI_DEPLOYMENT"]
 
     # Load dataset
     data_path = Path(__file__).resolve().parent / "data" / "locomo10.json"
@@ -244,8 +290,6 @@ async def main() -> None:
     # Collect QA entries from all specified conversations
     qa_entries: list[dict] = []
     for conv_id in args.conv_ids:
-        eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
-
         conv_entry: dict | None = None
         for entry in dataset:
             if entry["sample_id"] == conv_id:
@@ -256,16 +300,9 @@ async def main() -> None:
             print(f"ERROR: No conversation with sample_id={conv_id!r} found.")
             sys.exit(1)
 
-        speaker_a: str = conv_entry["conversation"]["speaker_a"]
-        speaker_b: str = conv_entry["conversation"]["speaker_b"]
-        speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
-        speaker_b_user_id = f"{eval_user_id}_{speaker_b.lower().replace(' ', '_')}"
-
         entries = collect_qa_entries(conv_entry)
         for e in entries:
             e["conv_id"] = conv_id
-            e["speaker_a_user_id"] = speaker_a_user_id
-            e["speaker_b_user_id"] = speaker_b_user_id
         qa_entries.extend(entries)
 
     print(f"Total QA entries (categories 1-4): {len(qa_entries)}")
@@ -273,29 +310,6 @@ async def main() -> None:
     if args.limit is not None:
         qa_entries = qa_entries[: args.limit]
         print(f"Limited to {len(qa_entries)} QA pairs")
-
-    # Warm up collection
-    await store._ensure_collection()
-
-    # Remove known noise facts that corrupt retrieval
-    for conv_id in args.conv_ids:
-        eval_user_id = f"locomo_eval_{conv_id.replace('-', '_')}"
-        conv_entry = next((e for e in dataset if e["sample_id"] == conv_id), None)
-        if conv_entry is None:
-            continue
-        speaker_a = conv_entry["conversation"]["speaker_a"]
-        speaker_a_user_id = f"{eval_user_id}_{speaker_a.lower().replace(' ', '_')}"
-        all_facts = await store.list_all(speaker_a_user_id)
-        noise_facts = [
-            f for f in all_facts
-            if "linked to this conversation" in f.content.lower()
-        ]
-        for nf in noise_facts:
-            await store.delete(nf.id, speaker_a_user_id)
-        if noise_facts:
-            print(f"Removed {len(noise_facts)} noise facts from {speaker_a_user_id}")
-
-    context_builder = ContextBuilder()
 
     # Resume support: load partial results if they exist
     partial_path = Path(f"{output_path}.partial.json")
@@ -308,150 +322,84 @@ async def main() -> None:
         completed_keys = {(r["question"], r["conv_id"]) for r in per_pair_results}
         print(f"Resuming: loaded {len(per_pair_results)} completed pairs from {partial_path}")
 
-    semaphore = asyncio.Semaphore(args.concurrency)
-    write_lock = asyncio.Lock()
-    pbar = tqdm(total=len(qa_entries), desc="Evaluating", unit="pair")
-    # Advance progress bar for already-completed pairs
-    pbar.update(len(completed_keys))
-
-    async def evaluate_pair(entry: dict) -> None:
+    for entry in tqdm(qa_entries, desc="Evaluating", unit="pair"):
         question = entry["question"]
         gold_answer = entry["answer"]
         category = entry["category"]
         conv_id = entry["conv_id"]
-        entry_speaker_a_user_id = entry["speaker_a_user_id"]
-        entry_speaker_b_user_id = entry["speaker_b_user_id"]
 
         # Skip already-completed pairs (resume support)
         if (question, conv_id) in completed_keys:
-            return
+            continue
 
-        async with semaphore:
-            # Retrieve memories from both speakers and merge
-            memories_a = await retriever.retrieve(
-                query=question,
-                user_id=entry_speaker_a_user_id,
-            )
-            memories_b = await retriever.retrieve(
-                query=question,
-                user_id=entry_speaker_b_user_id,
-            )
+        # Retrieve raw conversation turns from locomo_eval
+        turns = retrieve_raw_turns(qdrant, openai_sync, question, conv_id)
 
-            seen_contents: set[str] = set()
-            merged: list = []
-            for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
-                if fact.content not in seen_contents:
-                    seen_contents.add(fact.content)
-                    merged.append(fact)
-            memories = merged[:30]
-
-            if not memories:
-                result = {
+        if not turns:
+            per_pair_results.append(
+                {
                     "question": question,
                     "gold_answer": gold_answer,
                     "generated_answer": "I don't know",
                     "category": category,
                     "conv_id": conv_id,
-                    "memories_retrieved": [],
+                    "turns_retrieved": [],
                     "label": "WRONG",
                 }
-                async with write_lock:
-                    per_pair_results.append(result)
-                    partial_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(partial_path, "w") as pf:
-                        json.dump(per_pair_results, pf, indent=2)
-                pbar.update(1)
-                return
-
-            # Generate answer
-            system_prompt = context_builder.build_system_prompt(
-                ANSWER_SYSTEM_PROMPT,
-                memories,
             )
-            try:
-                generated_answer = await llm_service.complete(
-                    messages=[{"role": "user", "content": question}],
-                    system=system_prompt,
-                )
-            except Exception as e:
-                if "content_filter" in str(e) or "content management policy" in str(e):
-                    tqdm.write(f"  Skipped (content filter): {question[:60]}")
-                    generated_answer = "I don't know"
-                else:
-                    raise
+            partial_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(partial_path, "w") as pf:
+                json.dump(per_pair_results, pf, indent=2)
+            continue
 
-            # Two-pass retrieval: if first pass fails, retry with rephrased query
-            if "don't know" in generated_answer.lower() or "do not know" in generated_answer.lower():
-                # Rephrase: extract key nouns from question for a broader search
-                rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
-                rephrased_query = await llm_service.complete(
-                    messages=[{"role": "user", "content": rephrase_prompt}],
-                    system="Return only the rephrased query, nothing else.",
-                )
-                memories_a2 = await retriever.retrieve(
-                    query=rephrased_query,
-                    user_id=entry_speaker_a_user_id,
-                )
-                memories_b2 = await retriever.retrieve(
-                    query=rephrased_query,
-                    user_id=entry_speaker_b_user_id,
-                )
-                # Merge second-pass results with first-pass, deduplicate
-                seen_contents2: set[str] = {f.content for f in memories}
-                for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
-                    if fact.content not in seen_contents2:
-                        seen_contents2.add(fact.content)
-                        memories.append(fact)
-                memories = memories[:30]
+        # Generate answer using retrieved turns as context
+        context = build_context_from_turns(turns)
+        system_prompt = f"{ANSWER_SYSTEM_PROMPT}\n\n{context}"
 
-                # Regenerate answer with expanded context
-                system_prompt = context_builder.build_system_prompt(
-                    ANSWER_SYSTEM_PROMPT,
-                    memories,
-                )
-                try:
-                    generated_answer = await llm_service.complete(
-                        messages=[{"role": "user", "content": question}],
-                        system=system_prompt,
-                    )
-                except Exception as e:
-                    if "content_filter" in str(e) or "content management policy" in str(e):
-                        tqdm.write(f"  Skipped (content filter, 2nd pass): {question[:60]}")
-                        generated_answer = "I don't know"
-                    else:
-                        raise
-
-            # Judge
-            label = await judge_answer(
-                azure_client,
-                judge_model,
-                question,
-                gold_answer,
-                generated_answer,
+        try:
+            response = await azure_async.chat.completions.create(
+                model=answer_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+                temperature=0,
             )
+            generated_answer = response.choices[0].message.content or "I don't know"
+        except Exception as e:
+            if "content_filter" in str(e) or "content management policy" in str(e):
+                tqdm.write(f"  Skipped (content filter): {question[:60]}")
+                generated_answer = "I don't know"
+            else:
+                raise
 
-            result = {
+        # Judge
+        label = await judge_answer(
+            azure_async,
+            judge_model,
+            question,
+            gold_answer,
+            generated_answer,
+        )
+
+        per_pair_results.append(
+            {
                 "question": question,
                 "gold_answer": gold_answer,
                 "generated_answer": generated_answer,
                 "category": category,
                 "conv_id": conv_id,
-                "memories_retrieved": [fact.content for fact in memories],
+                "turns_retrieved": turns,
                 "label": label,
             }
+        )
 
-            async with write_lock:
-                per_pair_results.append(result)
-                partial_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(partial_path, "w") as pf:
-                    json.dump(per_pair_results, pf, indent=2)
+        # Save partial results incrementally
+        partial_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(partial_path, "w") as pf:
+            json.dump(per_pair_results, pf, indent=2)
 
-            pbar.update(1)
-
-    await asyncio.gather(*[evaluate_pair(entry) for entry in qa_entries])
-    pbar.close()
-
-    await azure_client.close()
+    await azure_async.close()
 
     # Compute metrics
     n_evaluated = len(per_pair_results)
@@ -472,7 +420,7 @@ async def main() -> None:
         }
 
     # Print summary
-    print(f"\nQA Accuracy Evaluation ({', '.join(args.conv_ids)})")
+    print(f"\nRAG Baseline QA Accuracy ({', '.join(args.conv_ids)})")
     print("\u2500" * 34)
     print(f"QA pairs evaluated: {n_evaluated}")
     print(f"Overall accuracy: {overall_accuracy:.1%} ({n_correct}/{n_evaluated} CORRECT)")
@@ -489,6 +437,8 @@ async def main() -> None:
         "metadata": {
             "conv_ids": args.conv_ids,
             "limit": args.limit,
+            "retrieval_source": "locomo_eval (raw conversation turns)",
+            "top_k": TOP_K,
             "timestamp": datetime.now(tz=UTC).isoformat(),
         },
         "overall": {

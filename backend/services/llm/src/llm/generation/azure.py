@@ -52,6 +52,8 @@ class AzureService(AbstractLLMService):
             api_key=resolved_key,
             azure_endpoint=resolved_endpoint,
             api_version="2024-10-21",
+            timeout=60.0,
+            max_retries=0,
         )
         self._deployment = resolved_deployment
 
