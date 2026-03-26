@@ -381,7 +381,10 @@ async def main() -> None:
                     raise
 
             # Two-pass retrieval: if first pass fails, retry with rephrased query
-            if "don't know" in generated_answer.lower() or "do not know" in generated_answer.lower():
+            if (
+                ("don't know" in generated_answer.lower() or "do not know" in generated_answer.lower())
+                and category != 4
+            ):
                 # Rephrase: extract key nouns from question for a broader search
                 rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
                 rephrased_query = await llm_service.complete(
@@ -438,6 +441,7 @@ async def main() -> None:
                 "conv_id": conv_id,
                 "memories_retrieved": [fact.content for fact in memories],
                 "label": label,
+                "two_pass_used": category != 4 and len(memories) > 0,
             }
 
             async with write_lock:
