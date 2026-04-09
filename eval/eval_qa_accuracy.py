@@ -85,6 +85,20 @@ Instructions:
 Answer the question using ONLY the provided memories.
 If the memories do not contain enough information, say "I don't know"."""
 
+OPEN_DOMAIN_SYSTEM_PROMPT = """You are an intelligent memory assistant
+tasked with retrieving accurate information from conversation memories.
+
+Instructions:
+1. Carefully analyze all provided memories
+2. Answer conversationally and completely — do not truncate your answer
+3. If the question asks about opinions, preferences, or general topics,
+   synthesize across all relevant memories
+4. If memories contain contradictory information, prioritize the most recent
+5. Provide enough detail to fully answer the question
+
+Answer the question using ONLY the provided memories.
+If the memories do not contain enough information, say "I don't know"."""
+
 JUDGE_PROMPT = """Your task is to label an answer as CORRECT or WRONG.
 
 Question: {question}
@@ -221,6 +235,7 @@ async def main() -> None:
         store=store,
         embedding_service=embedding_service,
         top_k=30,
+        jina_api_key=os.getenv("JINA_API_KEY"),
     )
     llm_service = AzureService(
         api_key=settings.azure_openai_api_key.get_secret_value(),
@@ -364,8 +379,9 @@ async def main() -> None:
                 return
 
             # Generate answer
+            active_system_prompt = OPEN_DOMAIN_SYSTEM_PROMPT if category == 4 else ANSWER_SYSTEM_PROMPT
             system_prompt = context_builder.build_system_prompt(
-                ANSWER_SYSTEM_PROMPT,
+                active_system_prompt,
                 memories,
             )
             try:
@@ -409,7 +425,7 @@ async def main() -> None:
 
                 # Regenerate answer with expanded context
                 system_prompt = context_builder.build_system_prompt(
-                    ANSWER_SYSTEM_PROMPT,
+                    active_system_prompt,
                     memories,
                 )
                 try:

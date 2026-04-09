@@ -50,4 +50,4 @@ eval/results/*.json
 eval/checkpoints/
 frontend/.next/
 frontend/node_modules/
-
+cl.md
