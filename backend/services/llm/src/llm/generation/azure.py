@@ -79,6 +79,7 @@ class AzureService(AbstractLLMService):
             response = await self._client.chat.completions.create(
                 model=self._deployment,
                 messages=sdk_messages,
+                temperature=0,
             )
             return response.choices[0].message.content
         except LLMError:
@@ -125,6 +126,7 @@ class AzureService(AbstractLLMService):
                 messages=sdk_messages,
                 tools=[openai_tool],
                 tool_choice={"type": "function", "function": {"name": tool["name"]}},
+                temperature=0,
             )
 
             tool_calls = response.choices[0].message.tool_calls
