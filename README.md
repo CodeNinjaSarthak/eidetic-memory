@@ -28,38 +28,30 @@
 
 Every conversation turn passes through a four-stage pipeline:
 
-```
-User message
-│
-▼
-┌─────────────────┐
-│ ExtractionPipeline │  LLM extracts candidate facts from the conversation pair
-└────────┬────────┘
-         │  candidates[]
-         ▼
-┌─────────────────┐
-│  EvolutionEngine  │  Compares each candidate against existing memories
-└────────┬────────┘  → ADD / UPDATE / DELETE / NOOP
-         │
-         ▼
-┌─────────────────┐
-│  QdrantMemoryStore│  Executes operations, stores embeddings + payloads
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  MemoryRetriever  │  Embeds query, searches Qdrant, reranks by importance
-└─────────────────┘
-         │
-         ▼
-Retrieved context → injected into LLM system prompt
+```mermaid
+flowchart TD
+    A[User Message] --> B[ExtractionPipeline]
+    B -->|candidate facts| C[EvolutionEngine]
+    C -->|ADD / UPDATE / DELETE / NOOP| D[QdrantMemoryStore]
+    D -->|stored embeddings + payloads| E[(Qdrant Vector DB)]
+
+    F[Query] --> G[MemoryRetriever]
+    G -->|embed query| H[Vector Search\ntop-k × 3 candidates]
+    H --> E
+    E -->|candidates| I[Jina Reranker API]
+    I -->|top-k reranked facts| J[Answer Generation LLM]
+    J --> K[Response]
+
+    style I fill:#ff9900,color:#000
+    style E fill:#e74c3c,color:#fff
+    style J fill:#3498db,color:#fff
 ```
 
 ---
 
 ## 📊 Evaluation
 
-Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) (conv-26 + conv-30, n=233 QA pairs) — long-form multi-session conversations with per-speaker memory isolation.
+Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) across 10 conversations (n=1540 QA pairs) with per-speaker memory isolation.
 
 ### Component accuracy
 
@@ -88,6 +80,18 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) (co
 | Multi-hop | 38.5% |
 | **Overall** | **57.3%** |
 
+### SOTA Comparison (LoCoMo, LLM-as-judge)
+
+| System | Overall | Temporal | Notes |
+|--------|---------|----------|-------|
+| RAG baseline (ours) | 44.4% | 24.9% | Direct retrieval over raw turns |
+| Pipeline v2 (ours) | 46.6% | 57.3% | Per-speaker isolation + round-robin |
+| **Eidetic Memory (ours)** | **57.3%** | **67.3%** | + Jina neural reranker |
+| Mem0 | ~66.9% | — | 3× more LLM calls per query |
+| Memobase | 75.78% | 85.05% | — |
+| Hindsight (OSS-20B) | 83.18% | 76.32% | — |
+| Hindsight (OSS-120B) | 85.67% | 79.44% | — |
+
 ### Progress
 
 | Run | Score | Details |
@@ -98,11 +102,28 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) (co
 | + Named entities + two-pass | 53.2% | n=233 |
 | **+ Jina neural reranker** | **57.3%** | Full n=1540, all 10 convs |
 
+### Retrieval Architecture
+
+```mermaid
+flowchart LR
+    Q[Question] --> VA[Vector Search\nSpeaker A namespace]
+    Q --> VB[Vector Search\nSpeaker B namespace]
+    VA -->|top-k×3 facts| RR[Round-Robin Merge\nzip_longest interleave]
+    VB -->|top-k×3 facts| RR
+    RR -->|combined candidates| JR[Jina Reranker v2]
+    JR -->|top-k reranked| LLM[Answer Generation\n1 LLM call]
+    LLM --> ANS[Answer]
+
+    style JR fill:#ff9900,color:#000
+    style LLM fill:#3498db,color:#fff
+```
+
+> **Single LLM call per query** — 3× more efficient than Mem0's
+> multi-call architecture, while achieving 57.3% on LoCoMo (n=1540).
+
 ---
 
-## 🚀 Quick Start
-
-**Prerequisites:** Python 3.13+, Node 18+, [uv](https://docs.astral.sh/uv/), [Qdrant Cloud](https://qdrant.tech/) account, Google API key.
+## 🚀 Reproduce Results
 
 ```bash
 # 1. Clone and install
@@ -110,49 +131,18 @@ git clone https://github.com/CodeNinjaSarthak/eidetic-memory.git
 cd eidetic-memory
 uv sync --all-packages
 
-# 2. Configure
+# 2. Configure — copy and fill in your API keys
 cp .env.development.example .env.development
-# Fill in: GOOGLE_API_KEY, QDRANT_URL, QDRANT_API_KEY
 
-# 3. Start backend
-make run
-
-# 4. Start frontend (separate terminal)
-make frontend-install && make frontend-dev
+# 3. Run the benchmark (requires ingested memories)
+uv run python eval/eval_qa_accuracy.py \
+  --conv-ids conv-26 conv-30 conv-41 conv-42 conv-43 conv-44 \
+             conv-47 conv-48 conv-49 conv-50 \
+  --output eval/results/my_results.json \
+  --concurrency 1
 ```
 
-Backend: `http://localhost:8000` · Frontend: `http://localhost:3000` · API docs: `http://localhost:8000/docs`
-
----
-
-## Configuration
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `LLM_PROVIDER` | Yes | `claude` | `claude` · `gemini` · `azure` · `groq` |
-| `ANTHROPIC_API_KEY` | If claude | — | Anthropic API key |
-| `GOOGLE_API_KEY` | If gemini | — | Google AI key — also used for embeddings |
-| `GROQ_API_KEY` | If groq | — | Groq API key |
-| `AZURE_OPENAI_API_KEY` | If azure | — | Azure OpenAI key |
-| `AZURE_OPENAI_ENDPOINT` | If azure | — | Azure endpoint URL |
-| `AZURE_OPENAI_DEPLOYMENT` | If azure | — | Deployment name |
-| `QDRANT_URL` | Yes | — | Qdrant instance URL |
-| `QDRANT_API_KEY` | No | — | Required for Qdrant Cloud |
-| `QDRANT_COLLECTION_NAME` | No | `eidetic_memories` | Collection name |
-| `EMBEDDING_MODEL` | No | `gemini-embedding-exp-03-07` | Embedding model |
-| `EMBEDDING_DIMENSION` | No | `768` | Vector dimension |
-| `MEMORY_EXTRACTION_MODEL` | No | `gemini-2.0-flash` | Extraction + evolution model |
-| `RECENCY_WINDOW` | No | `10` | Recent messages window size |
-| `SIMILARITY_TOP_K` | No | `10` | Top-k for similarity search |
-| `API_PORT` | No | `8000` | API server port |
-
-**Switching to Groq:**
-
-```bash
-LLM_PROVIDER=groq
-GROQ_API_KEY=gsk_...
-MEMORY_EXTRACTION_MODEL=llama-3.3-70b-versatile
-```
+See [eval/README.md](eval/README.md) for ingestion instructions and full evaluation documentation.
 
 ---
 
@@ -161,20 +151,14 @@ MEMORY_EXTRACTION_MODEL=llama-3.3-70b-versatile
 ```
 eidetic-memory/
 ├── backend/
-│   ├── apps/api/              # FastAPI routes, schemas, DI
-│   ├── services/
-│   │   ├── llm/               # Provider adapters (Claude, Gemini, Azure, Groq)
-│   │   ├── memory/            # Extraction, evolution, lifecycle pipeline
-│   │   ├── retrieval/         # Semantic search + context building
-│   │   └── storage/           # Qdrant abstraction
-│   └── packages/config/       # Shared settings — single source of truth
-├── frontend/                  # Next.js chat UI + memory browser
-├── eval/                      # LoCoMo evaluation harness + scripts
-├── Makefile
-└── pyproject.toml             # uv workspace root
+│   ├── apps/api/          # FastAPI routes
+│   ├── services/          # llm · memory · retrieval · storage
+│   └── packages/config/   # Shared settings
+├── frontend/              # Next.js chat UI
+└── eval/                  # LoCoMo evaluation harness
 ```
 
-**Dependency graph** (no circular deps allowed):
+**Dependency graph** (no circular deps):
 
 ```
 config → storage → llm → retrieval → memory → api
@@ -185,24 +169,9 @@ config → storage → llm → retrieval → memory → api
 ## Development
 
 ```bash
-make test        # run 142 tests
-make lint        # ruff check
-make format      # ruff format
-make check       # lint + test
-make run         # start API with hot reload
+make check   # lint + 152 tests
+make run     # start API with hot reload
 ```
-
-142 tests · behavior-focused · no mocks except external I/O
-
-Tests follow Google-style testing principles. See [ARCHITECTURE.md](ARCHITECTURE.md).
-
----
-
-## Contributing
-
-- 🐛 Found a bug? Open an issue with reproduction steps
-- 💡 Have an idea? Check open issues first, then open a discussion
-- 🔧 Want to contribute? PRs welcome — run `make check` before submitting
 
 ---
 
