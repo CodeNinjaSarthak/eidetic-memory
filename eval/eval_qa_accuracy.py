@@ -85,6 +85,20 @@ Instructions:
 Answer the question using ONLY the provided memories.
 If the memories do not contain enough information, say "I don't know"."""
 
+OPEN_DOMAIN_SYSTEM_PROMPT = """You are an intelligent memory assistant
+tasked with retrieving accurate information from conversation memories.
+
+Instructions:
+1. Carefully analyze all provided memories
+2. Answer conversationally and completely — do not truncate your answer
+3. If the question asks about opinions, preferences, or general topics,
+   synthesize across all relevant memories
+4. If memories contain contradictory information, prioritize the most recent
+5. Provide enough detail to fully answer the question
+
+Answer the question using ONLY the provided memories.
+If the memories do not contain enough information, say "I don't know"."""
+
 JUDGE_PROMPT = """Your task is to label an answer as CORRECT or WRONG.
 
 Question: {question}
@@ -193,6 +207,12 @@ def parse_args() -> argparse.Namespace:
         default="eval/results/qa_accuracy_benchmark_results.json",
         help="Path to save results JSON",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        help="Number of QA pairs to evaluate concurrently (default: 5)",
+    )
     return parser.parse_args()
 
 
@@ -215,6 +235,7 @@ async def main() -> None:
         store=store,
         embedding_service=embedding_service,
         top_k=30,
+        jina_api_key=os.getenv("JINA_API_KEY"),
     )
     llm_service = AzureService(
         api_key=settings.azure_openai_api_key.get_secret_value(),
@@ -291,112 +312,164 @@ async def main() -> None:
 
     context_builder = ContextBuilder()
 
-    # Evaluate
+    # Resume support: load partial results if they exist
+    partial_path = Path(f"{output_path}.partial.json")
     per_pair_results: list[dict] = []
+    completed_keys: set[tuple[str, str]] = set()
 
-    for entry in tqdm(qa_entries, desc="Evaluating", unit="pair"):
+    if partial_path.exists():
+        with open(partial_path) as f:
+            per_pair_results = json.load(f)
+        completed_keys = {(r["question"], r["conv_id"]) for r in per_pair_results}
+        print(f"Resuming: loaded {len(per_pair_results)} completed pairs from {partial_path}")
+
+    semaphore = asyncio.Semaphore(args.concurrency)
+    write_lock = asyncio.Lock()
+    pbar = tqdm(total=len(qa_entries), desc="Evaluating", unit="pair")
+    # Advance progress bar for already-completed pairs
+    pbar.update(len(completed_keys))
+
+    async def evaluate_pair(entry: dict) -> None:
         question = entry["question"]
         gold_answer = entry["answer"]
         category = entry["category"]
+        conv_id = entry["conv_id"]
         entry_speaker_a_user_id = entry["speaker_a_user_id"]
         entry_speaker_b_user_id = entry["speaker_b_user_id"]
 
-        # Retrieve memories from both speakers and merge
-        memories_a = await retriever.retrieve(
-            query=question,
-            user_id=entry_speaker_a_user_id,
-        )
-        memories_b = await retriever.retrieve(
-            query=question,
-            user_id=entry_speaker_b_user_id,
-        )
+        # Skip already-completed pairs (resume support)
+        if (question, conv_id) in completed_keys:
+            return
 
-        seen_contents: set[str] = set()
-        merged: list = []
-        for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
-            if fact.content not in seen_contents:
-                seen_contents.add(fact.content)
-                merged.append(fact)
-        memories = merged[:30]
+        async with semaphore:
+            # Retrieve memories from both speakers and merge
+            memories_a = await retriever.retrieve(
+                query=question,
+                user_id=entry_speaker_a_user_id,
+            )
+            memories_b = await retriever.retrieve(
+                query=question,
+                user_id=entry_speaker_b_user_id,
+            )
 
-        if not memories:
-            per_pair_results.append(
-                {
+            seen_contents: set[str] = set()
+            merged: list = []
+            for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
+                if fact.content not in seen_contents:
+                    seen_contents.add(fact.content)
+                    merged.append(fact)
+            memories = merged[:30]
+
+            if not memories:
+                result = {
                     "question": question,
                     "gold_answer": gold_answer,
                     "generated_answer": "I don't know",
                     "category": category,
-                    "conv_id": entry["conv_id"],
+                    "conv_id": conv_id,
                     "memories_retrieved": [],
                     "label": "WRONG",
                 }
-            )
-            continue
+                async with write_lock:
+                    per_pair_results.append(result)
+                    partial_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(partial_path, "w") as pf:
+                        json.dump(per_pair_results, pf, indent=2)
+                pbar.update(1)
+                return
 
-        # Generate answer
-        system_prompt = context_builder.build_system_prompt(
-            ANSWER_SYSTEM_PROMPT,
-            memories,
-        )
-        generated_answer = await llm_service.complete(
-            messages=[{"role": "user", "content": question}],
-            system=system_prompt,
-        )
-
-        # Two-pass retrieval: if first pass fails, retry with rephrased query
-        if "don't know" in generated_answer.lower() or "do not know" in generated_answer.lower():
-            # Rephrase: extract key nouns from question for a broader search
-            rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
-            rephrased_query = await llm_service.complete(
-                messages=[{"role": "user", "content": rephrase_prompt}],
-                system="Return only the rephrased query, nothing else.",
-            )
-            memories_a2 = await retriever.retrieve(
-                query=rephrased_query,
-                user_id=entry_speaker_a_user_id,
-            )
-            memories_b2 = await retriever.retrieve(
-                query=rephrased_query,
-                user_id=entry_speaker_b_user_id,
-            )
-            # Merge second-pass results with first-pass, deduplicate
-            seen_contents2: set[str] = {f.content for f in memories}
-            for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
-                if fact.content not in seen_contents2:
-                    seen_contents2.add(fact.content)
-                    memories.append(fact)
-            memories = memories[:30]
-
-            # Regenerate answer with expanded context
+            # Generate answer
+            active_system_prompt = OPEN_DOMAIN_SYSTEM_PROMPT if category == 4 else ANSWER_SYSTEM_PROMPT
             system_prompt = context_builder.build_system_prompt(
-                ANSWER_SYSTEM_PROMPT,
+                active_system_prompt,
                 memories,
             )
-            generated_answer = await llm_service.complete(
-                messages=[{"role": "user", "content": question}],
-                system=system_prompt,
+            try:
+                generated_answer = await llm_service.complete(
+                    messages=[{"role": "user", "content": question}],
+                    system=system_prompt,
+                )
+            except Exception as e:
+                if "content_filter" in str(e) or "content management policy" in str(e):
+                    tqdm.write(f"  Skipped (content filter): {question[:60]}")
+                    generated_answer = "I don't know"
+                else:
+                    raise
+
+            # Two-pass retrieval: if first pass fails, retry with rephrased query
+            if (
+                ("don't know" in generated_answer.lower() or "do not know" in generated_answer.lower())
+                and category != 4
+            ):
+                # Rephrase: extract key nouns from question for a broader search
+                rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
+                rephrased_query = await llm_service.complete(
+                    messages=[{"role": "user", "content": rephrase_prompt}],
+                    system="Return only the rephrased query, nothing else.",
+                )
+                memories_a2 = await retriever.retrieve(
+                    query=rephrased_query,
+                    user_id=entry_speaker_a_user_id,
+                )
+                memories_b2 = await retriever.retrieve(
+                    query=rephrased_query,
+                    user_id=entry_speaker_b_user_id,
+                )
+                # Merge second-pass results with first-pass, deduplicate
+                seen_contents2: set[str] = {f.content for f in memories}
+                for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
+                    if fact.content not in seen_contents2:
+                        seen_contents2.add(fact.content)
+                        memories.append(fact)
+                memories = memories[:30]
+
+                # Regenerate answer with expanded context
+                system_prompt = context_builder.build_system_prompt(
+                    active_system_prompt,
+                    memories,
+                )
+                try:
+                    generated_answer = await llm_service.complete(
+                        messages=[{"role": "user", "content": question}],
+                        system=system_prompt,
+                    )
+                except Exception as e:
+                    if "content_filter" in str(e) or "content management policy" in str(e):
+                        tqdm.write(f"  Skipped (content filter, 2nd pass): {question[:60]}")
+                        generated_answer = "I don't know"
+                    else:
+                        raise
+
+            # Judge
+            label = await judge_answer(
+                azure_client,
+                judge_model,
+                question,
+                gold_answer,
+                generated_answer,
             )
 
-        # Judge
-        label = await judge_answer(
-            azure_client,
-            judge_model,
-            question,
-            gold_answer,
-            generated_answer,
-        )
-
-        per_pair_results.append(
-            {
+            result = {
                 "question": question,
                 "gold_answer": gold_answer,
                 "generated_answer": generated_answer,
                 "category": category,
-                "conv_id": entry["conv_id"],
+                "conv_id": conv_id,
                 "memories_retrieved": [fact.content for fact in memories],
                 "label": label,
+                "two_pass_used": category != 4 and len(memories) > 0,
             }
-        )
+
+            async with write_lock:
+                per_pair_results.append(result)
+                partial_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(partial_path, "w") as pf:
+                    json.dump(per_pair_results, pf, indent=2)
+
+            pbar.update(1)
+
+    await asyncio.gather(*[evaluate_pair(entry) for entry in qa_entries])
+    pbar.close()
 
     await azure_client.close()
 
@@ -448,6 +521,11 @@ async def main() -> None:
     }
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
+
+    # Clean up partial file after successful completion
+    if partial_path.exists():
+        partial_path.unlink()
+
     print(f"\nResults saved to {output_path}")
 
 

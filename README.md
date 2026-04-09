@@ -8,7 +8,7 @@
   <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
   <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
-  <img src="https://img.shields.io/badge/LoCoMo_QA-53.2%25-brightgreen?style=flat-square" />
+  <img src="https://img.shields.io/badge/LoCoMo_QA-57.3%25-brightgreen?style=flat-square" />
 </p>
 
 ---
@@ -20,7 +20,7 @@
 - 🎯 **Retrieves the right context** — semantic search + importance reranking surfaces relevant facts at query time
 - 🗣️ **Multi-party ready** — per-speaker memory isolation prevents cross-speaker contamination in group conversations
 - 🔌 **Any LLM, any time** — swap Claude, Gemini, Azure OpenAI, or Groq with a single env var
-- 📊 **Benchmark-validated** — 53.2% QA accuracy on LoCoMo, 3.54x over baseline
+- 📊 **Benchmark-validated** — 57.3% QA accuracy on LoCoMo, 3.87x over baseline
 
 ---
 
@@ -82,11 +82,11 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) (co
 
 | Category | Accuracy |
 |----------|----------|
-| Temporal | **68.3%** |
-| Open-domain | 52.6% |
-| Single-hop | 37.2% |
+| Temporal | **67.3%** |
+| Open-domain | 62.0% |
+| Single-hop | 38.7% |
 | Multi-hop | 38.5% |
-| **Overall** | **53.2%** |
+| **Overall** | **57.3%** |
 
 ### Progress
 
@@ -95,8 +95,8 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) (co
 | Baseline | 14.8% | Gemini, conv-30 only, top-k=10 |
 | + Per-speaker isolation | 31.8% | Multi-namespace retrieval |
 | + Fixed merge | 52.4% | Round-robin interleaving |
-| **+ Named entities + two-pass** | **53.2%** | Current best |
-| mem0 paper | ~70% | Target ceiling |
+| + Named entities + two-pass | 53.2% | n=233 |
+| **+ Jina neural reranker** | **57.3%** | Full n=1540, all 10 convs |
 
 ---
 

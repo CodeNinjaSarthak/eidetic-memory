@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Groq
     groq_api_key: SecretStr | None = None
 
+    # Jina
+    jina_api_key: SecretStr | None = None
+
     # Azure OpenAI
     azure_openai_api_key: SecretStr | None = None
     azure_openai_endpoint: str | None = None
