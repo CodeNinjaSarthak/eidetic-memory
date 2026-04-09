@@ -307,7 +307,7 @@ async def main() -> None:
             tqdm.write(f"Speaker B: {speaker_b} → {speaker_b_user_id}")
 
             if args.dry_run:
-                tqdm.write(f"\n── Dry run ────────────────────────────────────────")
+                tqdm.write("\n── Dry run ────────────────────────────────────────")
 
             conv_turns = 0
             conv_facts = 0
