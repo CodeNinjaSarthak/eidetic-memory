@@ -107,8 +107,12 @@ Generated answer: {generated_answer}
 
 Be generous: if the generated answer refers to the same fact or time \
 period as the gold answer, label it CORRECT even if phrased differently.
-For dates: "May 2023" and "May 7, 2023" are both CORRECT if gold is \
-"7 May 2023".
+
+Date rules:
+- "May 2023" and "May 7, 2023" are both CORRECT if gold is "7 May 2023".
+- If the gold answer is a relative date like "the Friday before 20 May \
+2023" and the generated answer gives a nearby absolute date within 7 days \
+of the anchor date (e.g. "19 May 2023" or "20 May 2023"), label CORRECT.
 
 Return JSON: {{"label": "CORRECT"}} or {{"label": "WRONG"}}"""
 

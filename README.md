@@ -8,7 +8,7 @@
   <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
   <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
-  <img src="https://img.shields.io/badge/LoCoMo_QA-57.3%25-brightgreen?style=flat-square" />
+  <img src="https://img.shields.io/badge/LoCoMo_QA-57.5%25-brightgreen?style=flat-square" />
 </p>
 
 ---
@@ -20,7 +20,7 @@
 - 🎯 **Retrieves the right context** — semantic search + importance reranking surfaces relevant facts at query time
 - 🗣️ **Multi-party ready** — per-speaker memory isolation prevents cross-speaker contamination in group conversations
 - 🔌 **Any LLM, any time** — swap Claude, Gemini, Azure OpenAI, or Groq with a single env var
-- 📊 **Benchmark-validated** — 57.3% QA accuracy on LoCoMo, 3.87x over baseline
+- 📊 **Benchmark-validated** — 57.5% QA accuracy on LoCoMo, 3.88x over baseline
 
 ---
 
@@ -74,11 +74,11 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 
 | Category | Accuracy |
 |----------|----------|
-| Temporal | **67.3%** |
+| Temporal | **68.2%** |
 | Open-domain | 62.0% |
 | Single-hop | 38.7% |
 | Multi-hop | 38.5% |
-| **Overall** | **57.3%** |
+| **Overall** | **57.5%** |
 
 ### SOTA Comparison (LoCoMo, LLM-as-judge)
 
@@ -86,7 +86,7 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 |--------|---------|----------|-------|
 | RAG baseline (ours) | 44.4% | 24.9% | Direct retrieval over raw turns |
 | Pipeline v2 (ours) | 46.6% | 57.3% | Per-speaker isolation + round-robin |
-| **Eidetic Memory (ours)** | **57.3%** | **67.3%** | + Jina neural reranker |
+| **Eidetic Memory (ours)** | **57.5%** | **68.2%** | + Jina neural reranker |
 | Mem0 | ~66.9% | — | 3× more LLM calls per query |
 | Memobase | 75.78% | 85.05% | — |
 | Hindsight (OSS-20B) | 83.18% | 76.32% | — |
@@ -100,7 +100,7 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 | + Per-speaker isolation | 31.8% | Multi-namespace retrieval |
 | + Fixed merge | 52.4% | Round-robin interleaving |
 | + Named entities + two-pass | 53.2% | n=233 |
-| **+ Jina neural reranker** | **57.3%** | Full n=1540, all 10 convs |
+| **+ Jina neural reranker** | **57.5%** | Full n=1540, all 10 convs, v2 judge |
 
 ### Retrieval Architecture
 
@@ -119,7 +119,7 @@ flowchart LR
 ```
 
 > **Single LLM call per query** — 3× more efficient than Mem0's
-> multi-call architecture, while achieving 57.3% on LoCoMo (n=1540).
+> multi-call architecture, while achieving 57.5% on LoCoMo (n=1540).
 
 ---
 
@@ -171,6 +171,23 @@ config → storage → llm → retrieval → memory → api
 ```bash
 make check   # lint + 152 tests
 make run     # start API with hot reload
+```
+
+---
+
+## Citation
+
+If you use this work, please cite:
+
+```bibtex
+@misc{eidetic-memory-2026,
+  title  = {Eidetic Memory: Per-Speaker Memory Isolation for
+            Multi-Party Conversation Systems},
+  author = {Sarthak},
+  year   = {2026},
+  note   = {EMNLP 2026 (under review)},
+  url    = {https://github.com/CodeNinjaSarthak/eidetic-memory}
+}
 ```
 
 ---
