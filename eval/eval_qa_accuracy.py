@@ -99,6 +99,9 @@ Instructions:
 Answer the question using ONLY the provided memories.
 If the memories do not contain enough information, say "I don't know"."""
 
+MAX_GENERATION_RETRIES = 5
+GENERATION_BACKOFF = [5, 15, 30, 60, 120]  # seconds
+
 JUDGE_PROMPT = """Your task is to label an answer as CORRECT or WRONG.
 
 Question: {question}
@@ -166,7 +169,8 @@ async def judge_answer(
         generated_answer=generated_answer,
     )
 
-    for attempt in range(3):
+    judge_backoff = [2, 4, 8, 30, 60]
+    for attempt in range(5):
         try:
             response = await client.chat.completions.create(
                 model=model,
@@ -178,10 +182,11 @@ async def judge_answer(
             result = json.loads(content)
             return result.get("label", "WRONG")
         except Exception as e:
-            if attempt == 2:
-                tqdm.write(f"  ERROR judging answer after 3 attempts: {e}")
+            if attempt == 4:
+                tqdm.write(f"  ERROR judging answer after 5 attempts: {e}")
                 return "WRONG"
-            wait = 2**attempt
+            wait = judge_backoff[attempt]
+            tqdm.write(f"  Judge retry {attempt + 1}/5 in {wait}s: {e}")
             await asyncio.sleep(wait)
 
     return "WRONG"
@@ -217,6 +222,23 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Number of QA pairs to evaluate concurrently (default: 5)",
     )
+    parser.add_argument(
+        "--no-isolation",
+        action="store_true",
+        help=(
+            "Disable per-speaker isolation: retrieve from both speaker "
+            "namespaces merged into one query (flat RAG over extracted facts). "
+            "Used for ablation baseline."
+        ),
+    )
+    parser.add_argument(
+        "--no-rerank",
+        action="store_true",
+        help=(
+            "Disable Jina reranking even if JINA_API_KEY is set. "
+            "Used for ablation runs."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -239,7 +261,7 @@ async def main() -> None:
         store=store,
         embedding_service=embedding_service,
         top_k=30,
-        jina_api_key=os.getenv("JINA_API_KEY"),
+        jina_api_key=None if args.no_rerank else os.getenv("JINA_API_KEY"),
     )
     llm_service = AzureService(
         api_key=settings.azure_openai_api_key.get_secret_value(),
@@ -346,22 +368,51 @@ async def main() -> None:
             return
 
         async with semaphore:
-            # Retrieve memories from both speakers and merge
-            memories_a = await retriever.retrieve(
-                query=question,
-                user_id=entry_speaker_a_user_id,
-            )
-            memories_b = await retriever.retrieve(
-                query=question,
-                user_id=entry_speaker_b_user_id,
-            )
+            # Retrieve memories from both speakers with retry
+            memories_a: list = []
+            for ret_attempt in range(3):
+                try:
+                    memories_a = await retriever.retrieve(
+                        query=question,
+                        user_id=entry_speaker_a_user_id,
+                    )
+                    break
+                except Exception as e:
+                    if ret_attempt == 2:
+                        tqdm.write(f"  Retrieval (A) failed after 3 attempts: {e}")
+                        memories_a = []
+                        break
+                    await asyncio.sleep(2 ** ret_attempt)
+
+            memories_b: list = []
+            for ret_attempt in range(3):
+                try:
+                    memories_b = await retriever.retrieve(
+                        query=question,
+                        user_id=entry_speaker_b_user_id,
+                    )
+                    break
+                except Exception as e:
+                    if ret_attempt == 2:
+                        tqdm.write(f"  Retrieval (B) failed after 3 attempts: {e}")
+                        memories_b = []
+                        break
+                    await asyncio.sleep(2 ** ret_attempt)
 
             seen_contents: set[str] = set()
             merged: list = []
-            for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
-                if fact.content not in seen_contents:
-                    seen_contents.add(fact.content)
-                    merged.append(fact)
+            if args.no_isolation:
+                # Flat merge: concat by score order, no round-robin diversity enforcement
+                for fact in memories_a + memories_b:
+                    if fact.content not in seen_contents:
+                        seen_contents.add(fact.content)
+                        merged.append(fact)
+            else:
+                # Round-robin merge: interleave speaker A and B results for diversity
+                for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
+                    if fact.content not in seen_contents:
+                        seen_contents.add(fact.content)
+                        merged.append(fact)
             memories = merged[:30]
 
             if not memories:
@@ -388,17 +439,25 @@ async def main() -> None:
                 active_system_prompt,
                 memories,
             )
-            try:
-                generated_answer = await llm_service.complete(
-                    messages=[{"role": "user", "content": question}],
-                    system=system_prompt,
-                )
-            except Exception as e:
-                if "content_filter" in str(e) or "content management policy" in str(e):
-                    tqdm.write(f"  Skipped (content filter): {question[:60]}")
-                    generated_answer = "I don't know"
-                else:
-                    raise
+            generated_answer = "I don't know"
+            for gen_attempt in range(MAX_GENERATION_RETRIES):
+                try:
+                    generated_answer = await llm_service.complete(
+                        messages=[{"role": "user", "content": question}],
+                        system=system_prompt,
+                    )
+                    break
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "content_filter" in err_str or "content management policy" in err_str:
+                        tqdm.write(f"  Skipped (content filter): {question[:60]}")
+                        generated_answer = "I don't know"
+                        break
+                    if gen_attempt == MAX_GENERATION_RETRIES - 1:
+                        raise
+                    wait = GENERATION_BACKOFF[gen_attempt]
+                    tqdm.write(f"  Generation retry {gen_attempt + 1}/{MAX_GENERATION_RETRIES} in {wait}s: {e}")
+                    await asyncio.sleep(wait)
 
             # Two-pass retrieval: if first pass fails, retry with rephrased query
             if (
@@ -407,18 +466,54 @@ async def main() -> None:
             ):
                 # Rephrase: extract key nouns from question for a broader search
                 rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
-                rephrased_query = await llm_service.complete(
-                    messages=[{"role": "user", "content": rephrase_prompt}],
-                    system="Return only the rephrased query, nothing else.",
-                )
-                memories_a2 = await retriever.retrieve(
-                    query=rephrased_query,
-                    user_id=entry_speaker_a_user_id,
-                )
-                memories_b2 = await retriever.retrieve(
-                    query=rephrased_query,
-                    user_id=entry_speaker_b_user_id,
-                )
+                rephrased_query = question
+                for gen_attempt in range(MAX_GENERATION_RETRIES):
+                    try:
+                        rephrased_query = await llm_service.complete(
+                            messages=[{"role": "user", "content": rephrase_prompt}],
+                            system="Return only the rephrased query, nothing else.",
+                        )
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "content_filter" in err_str or "content management policy" in err_str:
+                            break
+                        if gen_attempt == MAX_GENERATION_RETRIES - 1:
+                            tqdm.write(f"  Rephrase failed after {MAX_GENERATION_RETRIES} attempts, using original query: {e}")
+                            break
+                        wait = GENERATION_BACKOFF[gen_attempt]
+                        tqdm.write(f"  Rephrase retry {gen_attempt + 1}/{MAX_GENERATION_RETRIES} in {wait}s: {e}")
+                        await asyncio.sleep(wait)
+
+                memories_a2: list = []
+                for ret_attempt in range(3):
+                    try:
+                        memories_a2 = await retriever.retrieve(
+                            query=rephrased_query,
+                            user_id=entry_speaker_a_user_id,
+                        )
+                        break
+                    except Exception as e:
+                        if ret_attempt == 2:
+                            tqdm.write(f"  Retrieval A2 failed after 3 attempts: {e}")
+                            memories_a2 = []
+                            break
+                        await asyncio.sleep(2 ** ret_attempt)
+
+                memories_b2: list = []
+                for ret_attempt in range(3):
+                    try:
+                        memories_b2 = await retriever.retrieve(
+                            query=rephrased_query,
+                            user_id=entry_speaker_b_user_id,
+                        )
+                        break
+                    except Exception as e:
+                        if ret_attempt == 2:
+                            tqdm.write(f"  Retrieval B2 failed after 3 attempts: {e}")
+                            memories_b2 = []
+                            break
+                        await asyncio.sleep(2 ** ret_attempt)
                 # Merge second-pass results with first-pass, deduplicate
                 seen_contents2: set[str] = {f.content for f in memories}
                 for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
@@ -432,17 +527,24 @@ async def main() -> None:
                     active_system_prompt,
                     memories,
                 )
-                try:
-                    generated_answer = await llm_service.complete(
-                        messages=[{"role": "user", "content": question}],
-                        system=system_prompt,
-                    )
-                except Exception as e:
-                    if "content_filter" in str(e) or "content management policy" in str(e):
-                        tqdm.write(f"  Skipped (content filter, 2nd pass): {question[:60]}")
-                        generated_answer = "I don't know"
-                    else:
-                        raise
+                for gen_attempt in range(MAX_GENERATION_RETRIES):
+                    try:
+                        generated_answer = await llm_service.complete(
+                            messages=[{"role": "user", "content": question}],
+                            system=system_prompt,
+                        )
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "content_filter" in err_str or "content management policy" in err_str:
+                            tqdm.write(f"  Skipped (content filter, 2nd pass): {question[:60]}")
+                            generated_answer = "I don't know"
+                            break
+                        if gen_attempt == MAX_GENERATION_RETRIES - 1:
+                            raise
+                        wait = GENERATION_BACKOFF[gen_attempt]
+                        tqdm.write(f"  Generation retry {gen_attempt + 1}/{MAX_GENERATION_RETRIES} in {wait}s: {e}")
+                        await asyncio.sleep(wait)
 
             # Judge
             label = await judge_answer(
@@ -514,6 +616,9 @@ async def main() -> None:
             "conv_ids": args.conv_ids,
             "limit": args.limit,
             "timestamp": datetime.now(tz=UTC).isoformat(),
+            "no_isolation": args.no_isolation,
+            "no_rerank": args.no_rerank,
+            "generation_model": os.environ.get("AZURE_OPENAI_DEPLOYMENT", "unknown"),
         },
         "overall": {
             "accuracy": overall_accuracy,
