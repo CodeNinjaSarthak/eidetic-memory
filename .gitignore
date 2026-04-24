@@ -50,4 +50,9 @@ eval/results/*.json
 eval/checkpoints/
 frontend/.next/
 frontend/node_modules/
-cl.mdeval/results/archive/
+cl.md
+eval/results/archive/
+eval/results/*.json
+eval/logs/
+eval/checkpoints/
+eval/results/smoke_test*.json
