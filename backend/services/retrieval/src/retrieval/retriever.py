@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -10,6 +11,87 @@ from storage.base import AbstractMemoryStore
 from storage.models import MemoryFact
 
 logger = logging.getLogger(__name__)
+
+
+class JinaRateLimiter:
+    """Dynamic adaptive rate limiter for Jina Reranker API calls.
+
+    Starts at initial_rpm, backs off 20% per 429, and recovers 5% per 60s of clean success.
+    Shared as a module-level singleton so all concurrent callers respect one limit.
+    """
+
+    _BACKOFF_FACTOR = 1.25
+    _RECOVERY_FACTOR = 0.95
+    _RECOVERY_WINDOW_SECS = 60.0
+    _STATUS_INTERVAL = 50
+
+    def __init__(self, initial_rpm: float = 60.0) -> None:
+        self._initial_interval = 60.0 / initial_rpm
+        self._current_interval = self._initial_interval
+        self._lock = asyncio.Lock()
+        self._last_call_time: float = 0.0
+        self._total_429s: int = 0
+        self._success_streak_start: float | None = None
+        self._query_count: int = 0
+
+    @property
+    def effective_rpm(self) -> float:
+        """Current effective requests-per-minute."""
+        return 60.0 / self._current_interval
+
+    async def throttle(self) -> None:
+        """Block until the current inter-call interval has elapsed since the last call."""
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call_time
+            if elapsed < self._current_interval:
+                await asyncio.sleep(self._current_interval - elapsed)
+            self._last_call_time = time.monotonic()
+
+    async def on_success(self) -> None:
+        """Record a successful call; triggers gradual upward recovery after 60s of clean runs."""
+        async with self._lock:
+            self._query_count += 1
+            now = time.monotonic()
+
+            if self._success_streak_start is None:
+                self._success_streak_start = now
+            elif now - self._success_streak_start >= self._RECOVERY_WINDOW_SECS:
+                new_interval = max(
+                    self._initial_interval,
+                    self._current_interval * self._RECOVERY_FACTOR,
+                )
+                if new_interval < self._current_interval:
+                    self._current_interval = new_interval
+                    logger.info(
+                        "Jina rate limiter recovering: %.1f RPM effective (interval %.2fs)",
+                        self.effective_rpm,
+                        self._current_interval,
+                    )
+                self._success_streak_start = now
+
+            if self._query_count % self._STATUS_INTERVAL == 0:
+                logger.info(
+                    "Rate limiter status: %.1f RPM effective, %d 429s total",
+                    self.effective_rpm,
+                    self._total_429s,
+                )
+
+    async def on_rate_limit(self) -> None:
+        """Record a 429 hit; lowers the rate by 20% and resets the recovery streak."""
+        async with self._lock:
+            self._total_429s += 1
+            self._current_interval *= self._BACKOFF_FACTOR
+            self._success_streak_start = None
+            logger.warning(
+                "Jina 429 received — new rate: %.1f RPM effective (interval %.2fs), total 429s: %d",
+                self.effective_rpm,
+                self._current_interval,
+                self._total_429s,
+            )
+
+
+_jina_rate_limiter = JinaRateLimiter(initial_rpm=60.0)
 
 
 def _has_importance_scores(facts: list[MemoryFact]) -> bool:
@@ -52,6 +134,7 @@ class MemoryRetriever:
 
         for attempt in range(max_retries):
             try:
+                await _jina_rate_limiter.throttle()
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
                         "https://api.jina.ai/v1/rerank",
@@ -67,6 +150,7 @@ class MemoryRetriever:
                         },
                     )
                     if response.status_code == 429:
+                        await _jina_rate_limiter.on_rate_limit()
                         wait = base_delay * (2 ** attempt)
                         logger.warning(
                             "Jina rate limit hit, retrying in %.1fs (attempt %d/%d)",
@@ -79,6 +163,7 @@ class MemoryRetriever:
                     reranked = []
                     for result in data["results"]:
                         reranked.append(facts[result["index"]])
+                    await _jina_rate_limiter.on_success()
                     return reranked
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 403:
