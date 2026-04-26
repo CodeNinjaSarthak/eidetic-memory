@@ -175,7 +175,7 @@ async def _local_rerank(query: str, facts: list, top_k: int) -> list:
     loop = asyncio.get_running_loop()
     scores: list[float] = await loop.run_in_executor(None, _predict)
 
-    sorted_pairs = sorted(zip(facts, scores), key=lambda x: x[1], reverse=True)
+    sorted_pairs = sorted(zip(facts, scores, strict=False), key=lambda x: x[1], reverse=True)
     return [fact for fact, _ in sorted_pairs[:top_k]]
 
 
