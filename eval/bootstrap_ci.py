@@ -67,7 +67,9 @@ def paired_bootstrap_p_value(
     Matches items by (conv_id, question). Returns (observed_diff, p_value)
     where p_value is the fraction of bootstrap samples where diff <= 0.
     """
-    key = lambda p: (p["conv_id"], p["question"])
+    def key(p: dict) -> tuple:
+        return (p["conv_id"], p["question"])
+
     a_map = {key(p): p for p in a_items}
     b_map = {key(p): p for p in b_items}
 
@@ -128,10 +130,10 @@ def main() -> None:
     )
     print(f"\n{'=' * 62}")
     print("  Paired Bootstrap Significance Test")
-    print(f"  Eidetic Memory vs RAG Baseline (10-conv set)")
+    print("  Eidetic Memory vs RAG Baseline (10-conv set)")
     print(f"{'─' * 62}")
     print(f"  Observed accuracy difference : {obs_diff:+.1%}")
-    print(f"  H0: diff ≤ 0  (Eidetic is not better than RAG)")
+    print("  H0: diff ≤ 0  (Eidetic is not better than RAG)")
     print(f"  p-value (one-sided)          : {p_val:.4f}")
     significance = "significant" if p_val < 0.05 else "NOT significant"
     print(f"  Result (α=0.05)              : {significance}")

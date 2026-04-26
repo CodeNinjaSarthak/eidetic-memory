@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import os
 import random
 import re
 import sys
@@ -31,9 +30,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "backend" / "packages" / "config" / "src"))
 sys.path.insert(0, str(_REPO_ROOT / "backend" / "services" / "storage" / "src"))
 
-from config.settings import Settings  # noqa: E402
 from qdrant_client import AsyncQdrantClient  # noqa: E402
 from qdrant_client.models import FieldCondition, Filter, MatchValue  # noqa: E402
+
+from config.settings import Settings  # noqa: E402
 
 load_dotenv(_REPO_ROOT / ".env.development")
 

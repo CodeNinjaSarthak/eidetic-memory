@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
 from pathlib import Path
 from statistics import mean
 
@@ -224,7 +223,7 @@ def print_question_examples(dev_pairs: list[dict], held_pairs: list[dict]) -> No
 
     print(f"\n{'─' * 72}")
     print(f"  Questions with different labels across runs ({len(flipped)} total)")
-    print(f"  (same question, same conv, different generation outcome)")
+    print("  (same question, same conv, different generation outcome)")
     for k, dp, hp in flipped[:6]:
         transition = f"{dp['label']} → {hp['label']}"
         print(f"\n  [{transition}]  {k[0]}")
