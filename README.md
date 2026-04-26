@@ -8,7 +8,7 @@
   <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
   <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
-  <img src="https://img.shields.io/badge/LoCoMo_QA-57.5%25-brightgreen?style=flat-square" />
+  <img src="https://img.shields.io/badge/LoCoMo_QA-56.3%25-brightgreen?style=flat-square" />
 </p>
 
 ---
@@ -20,7 +20,7 @@
 - 🎯 **Retrieves the right context** — semantic search + importance reranking surfaces relevant facts at query time
 - 🗣️ **Multi-party ready** — per-speaker memory isolation prevents cross-speaker contamination in group conversations
 - 🔌 **Any LLM, any time** — swap Claude, Gemini, Azure OpenAI, or Groq with a single env var
-- 📊 **Benchmark-validated** — 57.5% QA accuracy on LoCoMo, 3.88x over baseline
+- 📊 **Benchmark-validated** — 56.3% QA accuracy on LoCoMo, +39.3 pp on temporal questions over RAG
 
 ---
 
@@ -38,11 +38,11 @@ flowchart TD
     F[Query] --> G[MemoryRetriever]
     G -->|embed query| H[Vector Search\ntop-k × 3 candidates]
     H --> E
-    E -->|candidates| I[Jina Reranker API]
+    E -->|candidates| I[Local Cross-Encoder\ncross-encoder/ms-marco-MiniLM-L-6-v2]
     I -->|top-k reranked facts| J[Answer Generation LLM]
     J --> K[Response]
 
-    style I fill:#ff9900,color:#000
+    style I fill:#8e44ad,color:#fff
     style E fill:#e74c3c,color:#fff
     style J fill:#3498db,color:#fff
 ```
@@ -58,7 +58,7 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 | Metric | Score | Details |
 |--------|-------|---------|
 | Fact extraction recall | **95.0%** | n=100, QA pairs with evidence |
-| Fact extraction precision | **58.6%** | Relevant facts / total extracted |
+| Fact extraction precision | **52%** | Relevant facts / total extracted |
 | Conflict resolution accuracy | **100%** | 26 test cases (ADD/UPDATE/DELETE/NOOP) |
 
 ### Retrieval accuracy (LoCoMo, n=100)
@@ -74,11 +74,11 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 
 | Category | Accuracy |
 |----------|----------|
-| Temporal | **68.2%** |
-| Open-domain | 62.0% |
-| Single-hop | 38.7% |
-| Multi-hop | 38.5% |
-| **Overall** | **57.5%** |
+| Temporal | **64.2%** |
+| Open-domain | 60.5% |
+| Single-hop | 40.1% |
+| Multi-hop | 40.6% |
+| **Overall** | **56.3%** |
 
 ### SOTA Comparison (LoCoMo, LLM-as-judge)
 
@@ -86,7 +86,7 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 |--------|---------|----------|-------|
 | RAG baseline (ours) | 44.4% | 24.9% | Direct retrieval over raw turns |
 | Pipeline v2 (ours) | 46.6% | 57.3% | Per-speaker isolation + round-robin |
-| **Eidetic Memory (ours)** | **57.5%** | **68.2%** | + Jina neural reranker |
+| **Eidetic Memory (ours)** | **56.3%** | **64.2%** | + local cross-encoder (ms-marco-MiniLM-L-6-v2) |
 | Mem0 | ~66.9% | — | 3× more LLM calls per query |
 | Memobase | 75.78% | 85.05% | — |
 | Hindsight (OSS-20B) | 83.18% | 76.32% | — |
@@ -100,7 +100,11 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 | + Per-speaker isolation | 31.8% | Multi-namespace retrieval |
 | + Fixed merge | 52.4% | Round-robin interleaving |
 | + Named entities + two-pass | 53.2% | n=233 |
-| **+ Jina neural reranker** | **57.5%** | Full n=1540, all 10 convs, v2 judge |
+| + Isolation + RR, no rerank | 25.8% | n=233 — reranker is load-bearing |
+| + Isolation + RR + local cross-encoder | 55.8% | n=233 |
+| + Isolation + score-based + local cross-encoder | 55.8% | n=233 — merge strategy irrelevant |
+| + NER + two-pass + local cross-encoder | 56.6% | n=233 |
+| **+ Local cross-encoder (full run)** | **56.3%** | Full n=1540, all 10 convs, v2 judge |
 
 ### Retrieval Architecture
 
@@ -110,16 +114,16 @@ flowchart LR
     Q --> VB[Vector Search\nSpeaker B namespace]
     VA -->|top-k×3 facts| RR[Round-Robin Merge\nzip_longest interleave]
     VB -->|top-k×3 facts| RR
-    RR -->|combined candidates| JR[Jina Reranker v2]
+    RR -->|combined candidates| JR[Local Cross-Encoder\n(ms-marco-MiniLM-L-6-v2)]
     JR -->|top-k reranked| LLM[Answer Generation\n1 LLM call]
     LLM --> ANS[Answer]
 
-    style JR fill:#ff9900,color:#000
+    style JR fill:#8e44ad,color:#fff
     style LLM fill:#3498db,color:#fff
 ```
 
 > **Single LLM call per query** — 3× more efficient than Mem0's
-> multi-call architecture, while achieving 57.5% on LoCoMo (n=1540).
+> multi-call architecture, while achieving 56.3% on LoCoMo (n=1540).
 
 ---
 
@@ -135,9 +139,12 @@ uv sync --all-packages
 cp .env.development.example .env.development
 
 # 3. Run the benchmark (requires ingested memories)
-uv run python eval/eval_qa_accuracy.py \
+# Uses ~/eval-venv (sentence-transformers + ONNX); cross-encoder model
+# (~66MB) downloads to ~/.cache/huggingface/ on first run.
+~/eval-venv/bin/python eval/eval_qa_accuracy.py \
   --conv-ids conv-26 conv-30 conv-41 conv-42 conv-43 conv-44 \
              conv-47 conv-48 conv-49 conv-50 \
+  --local-rerank \
   --output eval/results/my_results.json \
   --concurrency 1
 ```
