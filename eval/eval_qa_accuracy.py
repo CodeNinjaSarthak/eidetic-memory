@@ -65,6 +65,13 @@ CATEGORIES = {
     4: "Open-domain",
 }
 
+# Loaded once at startup by _load_local_reranker() when --local-rerank is passed.
+_local_cross_encoder = None
+_ort_session = None      # onnxruntime.InferenceSession, set when ONNX model available
+_ort_tokenizer = None    # HF tokenizer for ONNX path
+
+ONNX_MODEL_PATH = "/tmp/reranker-onnx-int8/model.onnx"
+
 ANSWER_SYSTEM_PROMPT = """You are an intelligent memory assistant
 tasked with retrieving accurate information from conversation memories.
 
@@ -120,6 +127,58 @@ of the anchor date (e.g. "19 May 2023" or "20 May 2023"), label CORRECT.
 Return JSON: {{"label": "CORRECT"}} or {{"label": "WRONG"}}"""
 
 
+def _load_local_reranker() -> None:
+    """Load reranker: ONNX INT8 if available at ONNX_MODEL_PATH, else CrossEncoder."""
+    global _local_cross_encoder, _ort_session, _ort_tokenizer
+    if os.path.exists(ONNX_MODEL_PATH):
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
+        print(f"Loading ONNX INT8 reranker from {ONNX_MODEL_PATH}...")
+        _ort_tokenizer = AutoTokenizer.from_pretrained(os.path.dirname(ONNX_MODEL_PATH))
+        _ort_session = ort.InferenceSession(ONNX_MODEL_PATH, providers=["CPUExecutionProvider"])
+        print("ONNX reranker loaded.")
+        return
+    try:
+        from sentence_transformers import CrossEncoder  # type: ignore[import]
+    except ImportError:
+        print(
+            "ERROR: sentence-transformers is not installed.\n"
+            "Run: pip install sentence-transformers  (or: uv add sentence-transformers)"
+        )
+        sys.exit(1)
+    print("Loading local cross-encoder (cross-encoder/ms-marco-MiniLM-L-6-v2)...")
+    _local_cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    print("Local cross-encoder loaded.")
+
+
+async def _local_rerank(query: str, facts: list, top_k: int) -> list:
+    """Rerank facts with the local cross-encoder, returning top_k sorted by score descending.
+
+    Runs CPU-bound inference in a thread pool so it doesn't block the event loop.
+    """
+    if not facts:
+        return facts
+
+    documents = [f.content for f in facts]
+
+    def _predict() -> list:
+        if _ort_session is not None:
+            enc = _ort_tokenizer(
+                [query] * len(documents), documents,
+                return_tensors="np", padding=True, truncation=True, max_length=512,
+            )
+            logits = _ort_session.run(None, dict(enc))[0]
+            return logits[:, 0].tolist()
+        pairs = [[query, doc] for doc in documents]
+        return _local_cross_encoder.predict(pairs, batch_size=32).tolist()
+
+    loop = asyncio.get_running_loop()
+    scores: list[float] = await loop.run_in_executor(None, _predict)
+
+    sorted_pairs = sorted(zip(facts, scores), key=lambda x: x[1], reverse=True)
+    return [fact for fact, _ in sorted_pairs[:top_k]]
+
+
 def check_env() -> None:
     """Verify all required environment variables are set."""
     missing = [v for v in REQUIRED_VARS if not os.environ.get(v)]
@@ -150,6 +209,34 @@ def collect_qa_entries(conversation_data: dict) -> list[dict]:
             }
         )
     return entries
+
+
+def _merge_by_score(list_a: list, list_b: list) -> list:
+    """Merge two ranked lists using normalized rank as a proxy for similarity score.
+
+    Assigns each item a score of (n - rank) / n where n = len(list), then sorts
+    all candidates globally by that score descending.  Deduplicates by content.
+    The combined pool is bounded by len(list_a) + len(list_b), which is at most
+    top_k * fetch_multiplier * 2 (the same cap as round_robin pre-dedup).
+    """
+    def _scored(lst: list) -> list[tuple[object, float]]:
+        n = len(lst)
+        if n == 0:
+            return []
+        return [(fact, (n - rank) / n) for rank, fact in enumerate(lst)]
+
+    all_candidates = sorted(
+        _scored(list_a) + _scored(list_b),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    seen: set[str] = set()
+    merged: list = []
+    for fact, _ in all_candidates:
+        if fact.content not in seen:
+            seen.add(fact.content)
+            merged.append(fact)
+    return merged
 
 
 async def judge_answer(
@@ -235,8 +322,57 @@ def parse_args() -> argparse.Namespace:
         "--no-rerank",
         action="store_true",
         help=(
-            "Disable Jina reranking even if JINA_API_KEY is set. "
+            "Disable reranking (applies to both local cross-encoder and Jina API). "
             "Used for ablation runs."
+        ),
+    )
+    parser.add_argument(
+        "--no-rr-rerank",
+        action="store_true",
+        dest="no_rr_rerank",
+        help=(
+            "Disable reranking while keeping round_robin merge active. "
+            "Alias for --no-rerank."
+        ),
+    )
+    parser.add_argument(
+        "--merge-strategy",
+        choices=["round_robin", "score_based"],
+        default="round_robin",
+        dest="merge_strategy",
+        help=(
+            "Candidate merge strategy when combining speaker A and B results. "
+            "'round_robin' (default): zip_longest interleaving for diversity. "
+            "'score_based': sort all candidates by retrieval rank descending "
+            "(normalized rank used as proxy for vector similarity score)."
+        ),
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=30,
+        dest="top_k",
+        help="Number of memories to retrieve per speaker (default: 30)",
+    )
+    parser.add_argument(
+        "--fetch-multiplier",
+        type=int,
+        default=3,
+        dest="fetch_multiplier",
+        help=(
+            "Candidate over-fetch factor passed to the reranker: "
+            "fetch top_k * multiplier from Qdrant, rerank, return top_k. "
+            "Multiplier=1 disables over-fetching (default: 3)."
+        ),
+    )
+    parser.add_argument(
+        "--local-rerank",
+        action="store_true",
+        dest="local_rerank",
+        help=(
+            "Use a local cross-encoder (cross-encoder/ms-marco-MiniLM-L-6-v2) "
+            "instead of the Jina API for reranking. Requires sentence-transformers. "
+            "The model is loaded once at startup on CPU."
         ),
     )
     return parser.parse_args()
@@ -245,6 +381,9 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
     output_path = Path(args.output)
+
+    if args.local_rerank:
+        _load_local_reranker()
 
     check_env()
 
@@ -260,8 +399,9 @@ async def main() -> None:
     retriever = MemoryRetriever(
         store=store,
         embedding_service=embedding_service,
-        top_k=30,
-        jina_api_key=None if args.no_rerank else os.getenv("JINA_API_KEY"),
+        top_k=args.top_k,
+        jina_api_key=None if (args.no_rerank or args.no_rr_rerank or args.local_rerank) else os.getenv("JINA_API_KEY"),
+        reranker_fetch_multiplier=args.fetch_multiplier,
     )
     llm_service = AzureService(
         api_key=settings.azure_openai_api_key.get_secret_value(),
@@ -368,6 +508,10 @@ async def main() -> None:
             return
 
         async with semaphore:
+            # When local reranking is active, over-fetch so the cross-encoder has
+            # enough candidates to select from (mirrors the fetch_multiplier over-fetch logic).
+            retrieve_k = args.top_k * args.fetch_multiplier if args.local_rerank else None
+
             # Retrieve memories from both speakers with retry
             memories_a: list = []
             for ret_attempt in range(3):
@@ -375,6 +519,7 @@ async def main() -> None:
                     memories_a = await retriever.retrieve(
                         query=question,
                         user_id=entry_speaker_a_user_id,
+                        top_k=retrieve_k,
                     )
                     break
                 except Exception as e:
@@ -390,6 +535,7 @@ async def main() -> None:
                     memories_b = await retriever.retrieve(
                         query=question,
                         user_id=entry_speaker_b_user_id,
+                        top_k=retrieve_k,
                     )
                     break
                 except Exception as e:
@@ -407,13 +553,21 @@ async def main() -> None:
                     if fact.content not in seen_contents:
                         seen_contents.add(fact.content)
                         merged.append(fact)
+            elif args.merge_strategy == "score_based":
+                # Score-based merge: rank all candidates by normalized retrieval rank
+                # (a proxy for vector similarity score, since scores are not surfaced
+                # by the retriever). Items are sorted globally best-first.
+                merged = _merge_by_score(memories_a, memories_b)
             else:
                 # Round-robin merge: interleave speaker A and B results for diversity
                 for fact in [f for pair in zip_longest(memories_a, memories_b) for f in pair if f is not None]:
                     if fact.content not in seen_contents:
                         seen_contents.add(fact.content)
                         merged.append(fact)
-            memories = merged[:30]
+            if args.local_rerank:
+                memories = await _local_rerank(question, merged, args.top_k)
+            else:
+                memories = merged[:args.top_k]
 
             if not memories:
                 result = {
@@ -491,6 +645,7 @@ async def main() -> None:
                         memories_a2 = await retriever.retrieve(
                             query=rephrased_query,
                             user_id=entry_speaker_a_user_id,
+                            top_k=retrieve_k,
                         )
                         break
                     except Exception as e:
@@ -506,6 +661,7 @@ async def main() -> None:
                         memories_b2 = await retriever.retrieve(
                             query=rephrased_query,
                             user_id=entry_speaker_b_user_id,
+                            top_k=retrieve_k,
                         )
                         break
                     except Exception as e:
@@ -516,11 +672,21 @@ async def main() -> None:
                         await asyncio.sleep(2 ** ret_attempt)
                 # Merge second-pass results with first-pass, deduplicate
                 seen_contents2: set[str] = {f.content for f in memories}
-                for fact in [f for pair in zip_longest(memories_a2, memories_b2) for f in pair if f is not None]:
+                if args.merge_strategy == "score_based" and not args.no_isolation:
+                    second_pass_merged = _merge_by_score(memories_a2, memories_b2)
+                else:
+                    second_pass_merged = [
+                        f for pair in zip_longest(memories_a2, memories_b2)
+                        for f in pair if f is not None
+                    ]
+                for fact in second_pass_merged:
                     if fact.content not in seen_contents2:
                         seen_contents2.add(fact.content)
                         memories.append(fact)
-                memories = memories[:30]
+                if args.local_rerank:
+                    memories = await _local_rerank(question, memories, args.top_k)
+                else:
+                    memories = memories[:args.top_k]
 
                 # Regenerate answer with expanded context
                 system_prompt = context_builder.build_system_prompt(
@@ -618,6 +784,11 @@ async def main() -> None:
             "timestamp": datetime.now(tz=UTC).isoformat(),
             "no_isolation": args.no_isolation,
             "no_rerank": args.no_rerank,
+            "no_rr_rerank": args.no_rr_rerank,
+            "local_rerank": args.local_rerank,
+            "merge_strategy": args.merge_strategy,
+            "top_k": args.top_k,
+            "fetch_multiplier": args.fetch_multiplier,
             "generation_model": os.environ.get("AZURE_OPENAI_DEPLOYMENT", "unknown"),
         },
         "overall": {
