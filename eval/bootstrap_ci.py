@@ -9,9 +9,9 @@ from typing import NamedTuple
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
-EIDETIC_PATH = RESULTS_DIR / "final_eidetic_memory_all10.json"
+EIDETIC_PATH = RESULTS_DIR / "final_eidetic_memory_local_reranker_m3.json"
 RAG_PATH = RESULTS_DIR / "rag_baseline_all10.json"
-HELDOUT_PATH = RESULTS_DIR / "heldout_4convs_eidetic_memory.json"
+HELDOUT_PATH = RESULTS_DIR / "heldout_local_reranker_m3.json"
 
 N_BOOTSTRAP = 1000
 SEED = 42
