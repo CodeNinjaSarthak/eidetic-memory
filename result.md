@@ -28,9 +28,8 @@ Grand total across all 10: ~7574 facts
 | + Isolation + RR + cross-encoder           | 55.8%  | [49.8, 62.2]  |
 | + Isolation + score-based + cross-encoder  | 55.8%  | [49.4, 61.8]  |
 | + NER + two-pass                           | 56.6%  | [50.2, 62.7]  |
-| + Full pipeline (all 10 convs, n=1540)     | 56.3%  | [53.8, 58.7]* |
+| + Full pipeline (all 10 convs, n=1540)     | 56.3%  | [54.0, 58.8] |
 
-*placeholder CI — recompute with `eval/bootstrap_ci.py` before paper submission
 
 Reranker contribution: +29.2 pp (55.8 − 26.6)
 Full retrieval-structure gain: +20.1 pp (36.5 → 56.6)
