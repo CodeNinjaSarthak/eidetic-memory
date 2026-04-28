@@ -98,11 +98,12 @@ After facts are extracted, generic "User" references are replaced with the actua
 
 At query time, memories are retrieved from both speaker namespaces independently, then merged using round-robin interleaving:
 
-1. Retrieve top-k from speaker A's namespace
-2. Retrieve top-k from speaker B's namespace
-3. Interleave results alternately (via `itertools.zip_longest`), preserving per-speaker relevance order
+1. Retrieve top-k×3 from speaker A's namespace (90 candidates at k=30)
+2. Retrieve top-k×3 from speaker B's namespace (90 candidates at k=30)
+3. Interleave results alternately (via `itertools.zip_longest`), producing 180 candidates
 4. Deduplicate by content
-5. Take the top-k merged results
+5. Rerank all 180 candidates with `cross-encoder/ms-marco-MiniLM-L-6-v2` (local CPU, no API)
+6. Take the top-k (30) reranked facts as the final context
 
 This strategy ensures both speakers are represented in the final context while maintaining semantic relevance ordering within each namespace.
 
@@ -132,15 +133,17 @@ uv run python eval/ingest_locomo_production.py --cleanup
 
 End-to-end QA accuracy evaluation. Requires memories to be ingested first. For each QA pair, it retrieves from both speaker namespaces, generates an answer via LLM, and judges correctness against the gold answer. Implements two-pass retrieval: if the first-pass answer contains "don't know", the query is rephrased and retrieval is attempted again.
 
+> **Note:** Eval scripts use a separate venv (`~/eval-venv`) with sentence-transformers and ONNX runtime. Do not use `uv run` for eval commands.
+
 ```bash
 # Run full evaluation
-uv run python eval/eval_qa_accuracy.py
+~/eval-venv/bin/python eval/eval_qa_accuracy.py --local-rerank
 
 # Limit to N QA pairs (useful for quick checks)
-uv run python eval/eval_qa_accuracy.py --limit 10
+~/eval-venv/bin/python eval/eval_qa_accuracy.py --limit 10 --local-rerank
 
 # Custom output path
-uv run python eval/eval_qa_accuracy.py --output eval/results/my_results.json
+~/eval-venv/bin/python eval/eval_qa_accuracy.py --output eval/results/my_results.json --local-rerank
 ```
 
 Results are saved as JSON with overall accuracy, per-category breakdown, and per-pair details.
