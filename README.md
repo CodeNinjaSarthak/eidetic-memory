@@ -110,14 +110,13 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 
 ```mermaid
 flowchart LR
-    Q[Question] --> VA[Vector Search\nSpeaker A namespace]
-    Q --> VB[Vector Search\nSpeaker B namespace]
-    VA -->|top-k×3 facts| RR[Round-Robin Merge\nzip_longest interleave]
+    Q[Question] --> VA["Vector Search<br/>Speaker A namespace"]
+    Q --> VB["Vector Search<br/>Speaker B namespace"]
+    VA -->|top-k×3 facts| RR["Round-Robin Merge<br/>zip_longest interleave"]
     VB -->|top-k×3 facts| RR
-    RR -->|combined candidates| JR[Local Cross-Encoder\n(ms-marco-MiniLM-L-6-v2)]
-    JR -->|top-k reranked| LLM[Answer Generation\n1 LLM call]
+    RR -->|combined candidates| JR["Local Cross-Encoder<br/>(ms-marco-MiniLM-L-6-v2)"]
+    JR -->|top-k reranked| LLM["Answer Generation<br/>1 LLM call"]
     LLM --> ANS[Answer]
-
     style JR fill:#8e44ad,color:#fff
     style LLM fill:#3498db,color:#fff
 ```
