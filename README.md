@@ -121,9 +121,6 @@ flowchart LR
     style LLM fill:#3498db,color:#fff
 ```
 
-> **Single LLM call per query** — 3× more efficient than Mem0's
-> multi-call architecture, while achieving 56.3% on LoCoMo (n=1540).
-
 ---
 
 ## 🚀 Reproduce Results
@@ -177,23 +174,6 @@ config → storage → llm → retrieval → memory → api
 ```bash
 make check   # lint + 152 tests
 make run     # start API with hot reload
-```
-
----
-
-## Citation
-
-If you use this work, please cite:
-
-```bibtex
-@misc{eidetic-memory-2026,
-  title  = {Eidetic Memory: Per-Speaker Memory Isolation for
-            Multi-Party Conversation Systems},
-  author = {Sarthak},
-  year   = {2026},
-  note   = {EMNLP 2026 (under review)},
-  url    = {https://github.com/CodeNinjaSarthak/eidetic-memory}
-}
 ```
 
 ---
