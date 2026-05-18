@@ -5,7 +5,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.13%2B-blue?style=flat-square" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" />
-  <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
   <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
   <img src="https://img.shields.io/badge/LoCoMo_QA-56.3%25-brightgreen?style=flat-square" />
@@ -127,7 +126,7 @@ flowchart LR
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/CodeNinjaSarthak/eidetic-memory.git
+git clone https://github.com/[anonymous]/eidetic-memory.git
 cd eidetic-memory
 uv sync --all-packages
 
