@@ -44,6 +44,7 @@ from config.settings import Settings  # noqa: E402
 from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
 from llm.generation.azure import AzureService  # noqa: E402
 from llm.generation.base import LLMError  # noqa: E402
+from qdrant_client.http.exceptions import ResponseHandlingException  # noqa: E402
 from llm.generation.claude import ClaudeService  # noqa: E402
 from llm.generation.gemini import GeminiService  # noqa: E402
 from llm.generation.groq import GroqService  # noqa: E402
@@ -66,6 +67,7 @@ _RETRYABLE_ERRORS = (
     openai.APITimeoutError,
     openai.APIConnectionError,
     LLMError,  # Azure occasionally returns malformed JSON in tool calls
+    ResponseHandlingException,
 )
 _MAX_RETRIES = 3
 _BACKOFF_SECONDS = [5, 15, 45]
@@ -318,6 +320,10 @@ async def main() -> None:
                 session_turns = session["turns"]
                 session_facts = 0
                 session_skipped = 0
+                recent_messages_window: list[Message] = []
+                conversation_summary: str | None = None
+                summary_turn_counter: int = 0
+                summary_context_lines: list[str] = []
 
                 for i in tqdm(
                     range(len(session_turns)),
@@ -364,17 +370,48 @@ async def main() -> None:
 
                     pair = ConversationPair(current=current, previous=previous)
 
+                    recent_messages_window.append(current)
+                    if len(recent_messages_window) > 10:
+                        recent_messages_window = recent_messages_window[-10:]
+                    summary_context_lines.append(
+                        f"{speaker_name}: {session_turns[i]['text']}"
+                    )
+                    if len(summary_context_lines) > 30:
+                        summary_context_lines = summary_context_lines[-30:]
+                    summary_turn_counter += 1
+
                     if args.dry_run:
                         tqdm.write(f"  [{session_id}] turn {i}: {session_turns[i]['text'][:80]}...")
                         continue
 
                     skipped = False
+                    if summary_turn_counter % 15 == 0:
+                        _summary_system = (
+                            "Summarize the key facts, topics, and events discussed "
+                            "in this conversation so far in 3-5 sentences. Focus on "
+                            "named entities, relationships, and concrete events. Be "
+                            "specific — preserve names, places, dates, and numbers "
+                            "exactly."
+                        )
+                        _context_text = "\n".join(summary_context_lines)
+                        try:
+                            conversation_summary = await llm_service.complete(
+                                messages=[{"role": "user", "content": _context_text}],
+                                system=_summary_system,
+                            )
+                        except Exception as e:
+                            tqdm.write(
+                                f"  [{session_id}] turn {i}: summary generation failed: {e}"
+                            )
                     for attempt in range(1, _MAX_RETRIES + 1):
                         try:
                             facts = await manager.add_memory(
                                 pair,
                                 user_id=turn_user_id,
                                 session_id=session_id,
+                                conversation_summary=conversation_summary,
+                                recent_messages=recent_messages_window,
+                                current_speaker=speaker_name,
                             )
                             break
                         except _RETRYABLE_ERRORS as e:

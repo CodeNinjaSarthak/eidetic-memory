@@ -32,6 +32,7 @@ def _build_user_content(
     pair: ConversationPair,
     conversation_summary: str | None = None,
     recent_messages: list[Message] | None = None,
+    current_speaker: str | None = None,
 ) -> str:
     """Assemble the user message content for the extraction LLM call.
 
@@ -39,11 +40,15 @@ def _build_user_content(
         pair: The current conversation pair to extract facts from.
         conversation_summary: Optional summary of the conversation so far.
         recent_messages: Optional list of recent messages for context.
+        current_speaker: Optional name of the speaker whose turn is being processed.
 
     Returns:
         Formatted string combining all context for the LLM.
     """
     sections: list[str] = []
+
+    if current_speaker:
+        sections.append(f"Current Speaker: {current_speaker}")
 
     if conversation_summary:
         sections.append(f"Conversation Summary:\n{conversation_summary}")
@@ -78,6 +83,7 @@ class ExtractionPipeline:
         pair: ConversationPair,
         conversation_summary: str | None = None,
         recent_messages: list[Message] | None = None,
+        current_speaker: str | None = None,
     ) -> list[str]:
         """Extract candidate facts from a conversation pair.
 
@@ -85,11 +91,12 @@ class ExtractionPipeline:
             pair: The conversation pair to extract facts from.
             conversation_summary: Optional summary of the conversation so far.
             recent_messages: Optional list of recent messages for context.
+            current_speaker: Optional name of the speaker whose turn is being processed.
 
         Returns:
             A list of extracted fact strings.
         """
-        user_content = _build_user_content(pair, conversation_summary, recent_messages)
+        user_content = _build_user_content(pair, conversation_summary, recent_messages, current_speaker)
 
         result = await self._llm.complete_with_tool(
             messages=[{"role": "user", "content": user_content}],

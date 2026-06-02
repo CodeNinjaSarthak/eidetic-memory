@@ -41,7 +41,6 @@ sys.path.insert(0, str(_repo_root / "backend" / "services" / "memory" / "src"))
 
 from config.settings import Settings  # noqa: E402
 from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
-from llm.generation.azure import AzureService  # noqa: E402
 from retrieval.context import ContextBuilder  # noqa: E402
 from retrieval.retriever import MemoryRetriever  # noqa: E402
 from storage.qdrant import QdrantMemoryStore  # noqa: E402
@@ -72,39 +71,35 @@ _ort_tokenizer = None    # HF tokenizer for ONNX path
 
 ONNX_MODEL_PATH = "/tmp/reranker-onnx-int8/model.onnx"
 
-ANSWER_SYSTEM_PROMPT = """You are an intelligent memory assistant
-tasked with retrieving accurate information from conversation memories.
-
-Instructions:
-1. Carefully analyze all provided memories
-2. Pay special attention to any timestamps or dates in the memories
-3. If the question asks about a specific event or fact, look for
-   direct evidence in the memories
-4. If memories contain contradictory information, prioritize the
-   most recent memory
-5. If there is a question about time references (like "last year",
-   "two months ago", etc.), calculate the actual date based on
-   the memory timestamp
-6. Always convert relative time references to specific dates,
-   months, or years based on the memory content
-7. The answer should be less than 5-6 words
-
+ANSWER_SYSTEM_PROMPT = """You are a precise memory retrieval assistant.
 Answer the question using ONLY the provided memories.
-If the memories do not contain enough information, say "I don't know"."""
 
-OPEN_DOMAIN_SYSTEM_PROMPT = """You are an intelligent memory assistant
-tasked with retrieving accurate information from conversation memories.
+Rules:
+1. Base your answer strictly on the memory text. Do not add any information
+   not explicitly stated in the memories.
+2. Be concise but complete. If the answer is a single fact, one short sentence.
+   If the answer is a list of items, include ALL items from the memories.
+3. Pay attention to timestamps. If asked what is current or most recent,
+   use the latest memory. Convert relative time references to specific dates
+   using memory timestamps.
+4. If memories contain contradictory information, use the most recent.
+5. If the memories contain ANY relevant information, use it to answer.
+   Only say "I don't know" if no memories relate to the question at all.
+   Do not say "I don't know" if partial evidence exists — use what you have."""
 
-Instructions:
-1. Carefully analyze all provided memories
-2. Answer conversationally and completely — do not truncate your answer
-3. If the question asks about opinions, preferences, or general topics,
-   synthesize across all relevant memories
-4. If memories contain contradictory information, prioritize the most recent
-5. Provide enough detail to fully answer the question
-
+OPEN_DOMAIN_SYSTEM_PROMPT = """You are a precise memory retrieval assistant.
 Answer the question using ONLY the provided memories.
-If the memories do not contain enough information, say "I don't know"."""
+
+Rules:
+1. Base your answer strictly on the memory text. Do not add any information
+   not explicitly stated in the memories.
+2. Answer directly and specifically. State the key facts clearly first.
+   Do not bury the answer in long narrative preamble.
+3. Include enough detail to fully answer the question, but do not ramble.
+   Two to four sentences is usually sufficient.
+4. If memories contain contradictory information, use the most recent.
+5. If the memories contain ANY relevant information, use it to answer.
+   Only say "I don't know" if no memories relate to the question at all."""
 
 MAX_GENERATION_RETRIES = 5
 GENERATION_BACKOFF = [5, 15, 30, 60, 120]  # seconds
@@ -264,6 +259,7 @@ async def judge_answer(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
                 response_format={"type": "json_object"},
+                max_tokens=50,
             )
             content = response.choices[0].message.content or "{}"
             result = json.loads(content)
@@ -403,16 +399,12 @@ async def main() -> None:
         jina_api_key=None if (args.no_rerank or args.no_rr_rerank or args.local_rerank) else os.getenv("JINA_API_KEY"),
         reranker_fetch_multiplier=args.fetch_multiplier,
     )
-    llm_service = AzureService(
-        api_key=settings.azure_openai_api_key.get_secret_value(),
-        endpoint=settings.azure_openai_endpoint,
-        deployment=settings.azure_openai_deployment,
-    )
+    generation_deployment = settings.azure_openai_deployment
     azure_client = AsyncAzureOpenAI(
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_version="2024-02-01",
-        timeout=30.0,
+        api_version="2024-10-21",
+        timeout=60.0,
         max_retries=0,
     )
     judge_model = os.environ["EVAL_LLM_JUDGE_MODEL"]
@@ -593,13 +585,20 @@ async def main() -> None:
                 active_system_prompt,
                 memories,
             )
+            gen_max_tokens = 350 if category == 4 else 200
             generated_answer = "I don't know"
             for gen_attempt in range(MAX_GENERATION_RETRIES):
                 try:
-                    generated_answer = await llm_service.complete(
-                        messages=[{"role": "user", "content": question}],
-                        system=system_prompt,
+                    gen_response = await azure_client.chat.completions.create(
+                        model=generation_deployment,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": question},
+                        ],
+                        temperature=0,
+                        max_tokens=gen_max_tokens,
                     )
+                    generated_answer = gen_response.choices[0].message.content or "I don't know"
                     break
                 except Exception as e:
                     err_str = str(e).lower()
@@ -623,10 +622,16 @@ async def main() -> None:
                 rephrased_query = question
                 for gen_attempt in range(MAX_GENERATION_RETRIES):
                     try:
-                        rephrased_query = await llm_service.complete(
-                            messages=[{"role": "user", "content": rephrase_prompt}],
-                            system="Return only the rephrased query, nothing else.",
+                        rephrase_response = await azure_client.chat.completions.create(
+                            model=generation_deployment,
+                            messages=[
+                                {"role": "system", "content": "Return only the rephrased query, nothing else."},
+                                {"role": "user", "content": rephrase_prompt},
+                            ],
+                            temperature=0,
+                            max_tokens=50,
                         )
+                        rephrased_query = rephrase_response.choices[0].message.content or question
                         break
                     except Exception as e:
                         err_str = str(e).lower()
@@ -695,10 +700,16 @@ async def main() -> None:
                 )
                 for gen_attempt in range(MAX_GENERATION_RETRIES):
                     try:
-                        generated_answer = await llm_service.complete(
-                            messages=[{"role": "user", "content": question}],
-                            system=system_prompt,
+                        gen_response = await azure_client.chat.completions.create(
+                            model=generation_deployment,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": question},
+                            ],
+                            temperature=0,
+                            max_tokens=gen_max_tokens,
                         )
+                        generated_answer = gen_response.choices[0].message.content or "I don't know"
                         break
                     except Exception as e:
                         err_str = str(e).lower()
