@@ -40,14 +40,16 @@ sys.path.insert(0, str(_repo_root / "backend" / "services" / "llm" / "src"))
 sys.path.insert(0, str(_repo_root / "backend" / "services" / "retrieval" / "src"))
 sys.path.insert(0, str(_repo_root / "backend" / "services" / "memory" / "src"))
 
+from qdrant_client.http.exceptions import ResponseHandlingException  # noqa: E402
+
 from config.settings import Settings  # noqa: E402
 from llm.embeddings.azure import AzureEmbeddingService  # noqa: E402
 from llm.generation.azure import AzureService  # noqa: E402
 from llm.generation.base import LLMError  # noqa: E402
-from qdrant_client.http.exceptions import ResponseHandlingException  # noqa: E402
 from llm.generation.claude import ClaudeService  # noqa: E402
 from llm.generation.gemini import GeminiService  # noqa: E402
 from llm.generation.groq import GroqService  # noqa: E402
+from llm.generation.openai_service import OpenAIService  # noqa: E402
 from memory.manager import MemoryManager  # noqa: E402
 from memory.models.conversation import ConversationPair, Message  # noqa: E402
 from storage.qdrant import QdrantMemoryStore  # noqa: E402
@@ -200,6 +202,11 @@ def _build_llm_service(settings: Settings):
             return GroqService(
                 api_key=settings.groq_api_key.get_secret_value(),
                 model=settings.memory_extraction_model,
+            )
+        case "openai":
+            return OpenAIService(
+                api_key=settings.openai_api_key.get_secret_value(),
+                model=settings.openai_model,
             )
 
 

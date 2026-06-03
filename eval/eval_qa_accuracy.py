@@ -28,7 +28,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from tqdm import tqdm
 
 # ── sys.path setup for backend imports ───────────────────────
@@ -49,12 +49,11 @@ from storage.qdrant import QdrantMemoryStore  # noqa: E402
 env_path = _repo_root / ".env.development"
 load_dotenv(env_path)
 
-REQUIRED_VARS = [
+_ALWAYS_REQUIRED = [
     "GOOGLE_API_KEY",
     "QDRANT_URL",
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_ENDPOINT",
-    "EVAL_LLM_JUDGE_MODEL",
 ]
 
 CATEGORIES = {
@@ -176,7 +175,10 @@ async def _local_rerank(query: str, facts: list, top_k: int) -> list:
 
 def check_env() -> None:
     """Verify all required environment variables are set."""
-    missing = [v for v in REQUIRED_VARS if not os.environ.get(v)]
+    required = list(_ALWAYS_REQUIRED)
+    if not os.environ.get("OPENAI_API_KEY"):
+        required.append("EVAL_LLM_JUDGE_MODEL")
+    missing = [v for v in required if not os.environ.get(v)]
     if missing:
         print(f"ERROR: Missing environment variables: {', '.join(missing)}")
         print("Set them in .env.development and re-run.")
@@ -235,7 +237,7 @@ def _merge_by_score(list_a: list, list_b: list) -> list:
 
 
 async def judge_answer(
-    client: AsyncAzureOpenAI,
+    client: AsyncOpenAI,
     model: str,
     question: str,
     gold_answer: str,
@@ -399,15 +401,29 @@ async def main() -> None:
         jina_api_key=None if (args.no_rerank or args.no_rr_rerank or args.local_rerank) else os.getenv("JINA_API_KEY"),
         reranker_fetch_multiplier=args.fetch_multiplier,
     )
-    generation_deployment = settings.azure_openai_deployment
-    azure_client = AsyncAzureOpenAI(
-        api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_version="2024-10-21",
-        timeout=60.0,
-        max_retries=0,
-    )
-    judge_model = os.environ["EVAL_LLM_JUDGE_MODEL"]
+    if os.environ.get("OPENAI_API_KEY"):
+        from openai import AsyncOpenAI as _AsyncOpenAI
+        azure_client = _AsyncOpenAI(
+            api_key=os.environ["OPENAI_API_KEY"],
+            timeout=60.0,
+            max_retries=0,
+        )
+        generation_deployment = os.environ.get("OPENAI_MODEL", "gpt-4.1")
+        judge_model = os.environ.get(
+            "EVAL_LLM_JUDGE_MODEL",
+            os.environ.get("OPENAI_MODEL", "gpt-4.1"),
+        )
+    else:
+        from openai import AsyncAzureOpenAI as _AsyncAzureOpenAI
+        azure_client = _AsyncAzureOpenAI(
+            api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            api_version="2024-10-21",
+            timeout=60.0,
+            max_retries=0,
+        )
+        generation_deployment = os.environ["AZURE_OPENAI_DEPLOYMENT"]
+        judge_model = os.environ["EVAL_LLM_JUDGE_MODEL"]
 
     # Load dataset
     data_path = Path(__file__).resolve().parent / "data" / "locomo10.json"

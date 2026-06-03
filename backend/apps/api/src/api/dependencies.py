@@ -12,6 +12,7 @@ from llm.generation.base import AbstractLLMService
 from llm.generation.claude import ClaudeService
 from llm.generation.gemini import GeminiService
 from llm.generation.groq import GroqService
+from llm.generation.openai_service import OpenAIService
 from memory.manager import MemoryManager
 from retrieval.retriever import MemoryRetriever
 from storage.qdrant import QdrantMemoryStore
@@ -46,6 +47,11 @@ def _build_llm_service(settings: Settings) -> AbstractLLMService:
             return GroqService(
                 api_key=settings.groq_api_key.get_secret_value(),
                 model=settings.memory_extraction_model,
+            )
+        case "openai":
+            return OpenAIService(
+                api_key=settings.openai_api_key.get_secret_value(),
+                model=settings.openai_model,
             )
 
 
