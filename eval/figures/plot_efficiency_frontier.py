@@ -20,7 +20,7 @@ plt.rcParams.update({
 SYSTEMS = [
     ("RAG baseline",      1.0,  44.4, "o", RAG_COLOR,      True),
     ("Pipeline v2",       1.0,  46.6, "o", PIPELINE_COLOR, True),
-    ("Eidetic Memory v2", 1.9,  66.6, "o", V2_COLOR,       True),
+    ("Eidetic Memory v2", 1.02, 66.6, "o", V2_COLOR,       True),
     ("Mem0",              2.0,  66.9, "s", MEM0_COLOR,     True),
     ("Memobase",          None, 75.8, "s", GRAY,           False),
     ("Hindsight-20B",     None, 83.2, "s", GRAY,           False),
@@ -31,7 +31,7 @@ SYSTEMS = [
 LABEL_OFFSETS = {
     "RAG baseline":      (+0.05, -4.0),
     "Pipeline v2":       (+0.05, +2.0),
-    "Eidetic Memory v2": (-0.30, -4.0),
+    "Eidetic Memory v2": (+0.05, +2.0),
     "Mem0":              (+0.05, +2.0),
     "Memobase":          (-0.40, +1.0),
     "Hindsight-20B":     (-0.50, +1.0),
@@ -48,27 +48,29 @@ ax.text(3.0, 90.5, "call count\nnot reported", ha="center", va="top", fontsize=8
 
 # Reference line at Eidetic v2 accuracy
 ax.axhline(66.6, color=V2_COLOR, linestyle="--", lw=1.0, alpha=0.65)
-ax.text(0.53, 67.3, "Eidetic Memory v2 (66.6%)", fontsize=8, color=V2_COLOR)
+ax.text(0.53, 69.2, "Eidetic Memory v2 (1.02 calls, 66.6%)", fontsize=8, color=V2_COLOR)
 
 for name, calls, acc, marker, color, known in SYSTEMS:
     x = calls if known else X_UNKNOWN
     size = 200 if name == "Eidetic Memory v2" else 100
     ax.scatter(x, acc, marker=marker, color=color, s=size, zorder=5)
+    # Skip inline label for Eidetic Memory v2 — the dashed reference line already names it
+    if name == "Eidetic Memory v2":
+        continue
     dx, dy = LABEL_OFFSETS.get(name, (+0.05, +1.2))
     ax.annotate(
         name,
         xy=(x, acc),
         xytext=(x + dx, acc + dy),
         fontsize=8,
-        fontweight="bold" if name == "Eidetic Memory v2" else "normal",
         ha="left" if dx >= 0 else "right",
     )
 
 # Arrow pointing to Eidetic Memory v2
 ax.annotate(
     "",
-    xy=(1.9, 66.6),
-    xytext=(1.55, 60.5),
+    xy=(1.02, 66.6),
+    xytext=(0.75, 61.0),
     arrowprops=dict(arrowstyle="->", color=V2_COLOR, lw=1.5),
 )
 

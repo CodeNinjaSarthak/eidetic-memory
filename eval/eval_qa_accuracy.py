@@ -586,6 +586,7 @@ async def main() -> None:
                     "conv_id": conv_id,
                     "memories_retrieved": [],
                     "label": "WRONG",
+                    "two_pass_fired": False,
                 }
                 async with write_lock:
                     per_pair_results.append(result)
@@ -629,10 +630,12 @@ async def main() -> None:
                     await asyncio.sleep(wait)
 
             # Two-pass retrieval: if first pass fails, retry with rephrased query
+            two_pass_fired = False
             if (
                 ("don't know" in generated_answer.lower() or "do not know" in generated_answer.lower())
                 and category != 4
             ):
+                two_pass_fired = True
                 # Rephrase: extract key nouns from question for a broader search
                 rephrase_prompt = f"Rephrase this question as a short keyword search query (5 words max): {question}"
                 rephrased_query = question
@@ -756,7 +759,7 @@ async def main() -> None:
                 "conv_id": conv_id,
                 "memories_retrieved": [fact.content for fact in memories],
                 "label": label,
-                "two_pass_used": category != 4 and len(memories) > 0,
+                "two_pass_fired": two_pass_fired,
             }
 
             async with write_lock:
@@ -790,6 +793,12 @@ async def main() -> None:
             "total": len(cat_results),
         }
 
+    # Two-pass stats
+    n_non_od = sum(1 for r in per_pair_results if r["category"] != 4)
+    n_two_pass = sum(1 for r in per_pair_results if r.get("two_pass_fired"))
+    two_pass_rate = n_two_pass / n_non_od if n_non_od > 0 else 0.0
+    avg_llm_calls = (n_evaluated + n_two_pass * 2) / n_evaluated if n_evaluated > 0 else 0.0
+
     # Print summary
     print(f"\nQA Accuracy Evaluation ({', '.join(args.conv_ids)})")
     print("\u2500" * 34)
@@ -801,6 +810,8 @@ async def main() -> None:
         if cat_key in by_category:
             cat = by_category[cat_key]
             print(f"  {cat_label:12s}: {cat['accuracy']:.1%} ({cat['total']} pairs)")
+    print(f"\nTwo-pass fired: {n_two_pass} / {n_non_od} non-OD queries ({two_pass_rate:.1%})")
+    print(f"Estimated avg LLM calls/query: {avg_llm_calls:.2f}")
 
     # Save JSON
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -822,6 +833,9 @@ async def main() -> None:
             "accuracy": overall_accuracy,
             "correct": n_correct,
             "total": n_evaluated,
+            "two_pass_fired": n_two_pass,
+            "two_pass_rate": two_pass_rate,
+            "avg_llm_calls_per_query": avg_llm_calls,
         },
         "by_category": by_category,
         "per_pair": per_pair_results,

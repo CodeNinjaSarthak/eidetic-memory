@@ -1,27 +1,37 @@
-"""Sample 100 facts from Qdrant and link each to its source conversation session.
+"""Sample 100 facts from the v2 Qdrant collection with stratified sampling.
 
-Outputs a CSV with columns:
-  fact_text, conversation_id, speaker, session_id, session_datetime,
-  source_turns, is_relevant
+Stratification:
+  - 10 conversations × 10 facts each  = 100 total
+  - ~50/50 speakers per conversation  = 5 facts per speaker
 
-The is_relevant column is empty — fill in 1 (correct) or 0 (wrong/hallucinated)
-during manual review.
+For each fact, we resolve the single most-relevant source turn by Jaccard
+word overlap with the fact text so human labelers have a concrete utterance to
+check against.  Source turns are loaded from the local locomo10.json file
+(same data used during ingestion) so no Qdrant turns collection is required.
 
-Sampling strategy: stratified over user_ids so every speaker-namespace
-contributes roughly equally (total target = 100 facts).
+Output: eval/results/v2_precision_sample.csv
 
-Source turns: full dialogue of the session the fact was extracted from,
-formatted as "Speaker: text" lines, so reviewers can judge extraction quality
-in context.
+Columns:
+  fact_id           — Qdrant point UUID of the extracted fact
+  conv_id           — conversation ID (e.g. conv-26)
+  speaker           — display name of the speaker the fact belongs to
+  fact_text         — the extracted fact
+  source_turn_id    — dia_id of the best-matching source turn
+  source_utterance  — verbatim text of that turn
+  label_correct     — empty, for human labeling (1 = correct, 0 = wrong)
+  label_attribution — empty, for human labeling (1 = right speaker, 0 = wrong)
+  notes             — empty, for annotator notes
 """
 
 from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import random
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -37,17 +47,25 @@ from config.settings import Settings  # noqa: E402
 
 load_dotenv(_REPO_ROOT / ".env.development")
 
-FACTS_COLLECTION   = "eidetic_memories"
-TURNS_COLLECTION   = "locomo_eval"
-OUTPUT_PATH        = Path(__file__).parent / "results" / "precision_sample.csv"
-TARGET_TOTAL       = 100
-SEED               = 42
+FACTS_COLLECTION = "eidetic_memories"
+LOCOMO_DATA_PATH = Path(__file__).parent / "data" / "locomo10.json"
+OUTPUT_PATH = Path(__file__).parent / "results" / "v2_precision_sample.csv"
+TARGET_PER_CONV = 10       # facts per conversation
+SEED = 42
 
-# user_id format: locomo_eval_conv_{conv_num}_{speaker_lower}
-_USER_ID_RE = re.compile(
-    r"^locomo_eval_(conv[-_]\d+)_(.+)$",
-    re.IGNORECASE,
-)
+_USER_ID_RE = re.compile(r"^locomo_eval_(conv[-_]\d+)_(.+)$", re.IGNORECASE)
+
+FIELDNAMES = [
+    "fact_id",
+    "conv_id",
+    "speaker",
+    "fact_text",
+    "source_turn_id",
+    "source_utterance",
+    "label_correct",
+    "label_attribution",
+    "notes",
+]
 
 
 def parse_user_id(user_id: str) -> tuple[str, str]:
@@ -59,9 +77,28 @@ def parse_user_id(user_id: str) -> tuple[str, str]:
     if not m:
         return user_id, "unknown"
     conv_raw, speaker_slug = m.group(1), m.group(2)
-    # Normalise underscore separator to hyphen for conv ids
-    conv_id = conv_raw.replace("_", "-")
-    return conv_id, speaker_slug
+    return conv_raw.replace("_", "-"), speaker_slug
+
+
+def _dia_sort_key(turn: dict) -> tuple[int, int]:
+    parts = re.findall(r"\d+", turn.get("dia_id", "D0:0"))
+    return (int(parts[0]) if parts else 0, int(parts[1]) if len(parts) > 1 else 0)
+
+
+def _jaccard(a: str, b: str) -> float:
+    wa = set(a.lower().split())
+    wb = set(b.lower().split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def find_best_turn(fact_content: str, turns: list[dict]) -> dict | None:
+    """Return the turn with the highest Jaccard word overlap against fact_content."""
+    if not turns:
+        return None
+    best = max(turns, key=lambda t: _jaccard(fact_content, t.get("text", "")))
+    return best
 
 
 async def scroll_all_user_ids(client: AsyncQdrantClient) -> list[str]:
@@ -85,11 +122,8 @@ async def scroll_all_user_ids(client: AsyncQdrantClient) -> list[str]:
     return sorted(user_ids)
 
 
-async def scroll_facts_for_user(
-    client: AsyncQdrantClient,
-    user_id: str,
-) -> list[dict]:
-    """Return all facts (id, user_id, session_id, content) for one user_id."""
+async def scroll_facts_for_user(client: AsyncQdrantClient, user_id: str) -> list[dict]:
+    """Return all facts for one user_id (payload + Qdrant point id)."""
     facts: list[dict] = []
     offset = None
     while True:
@@ -98,61 +132,61 @@ async def scroll_facts_for_user(
             scroll_filter=Filter(
                 must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
             ),
-            with_payload=["id", "user_id", "session_id", "content"],
-            with_vectors=False,
-            limit=250,
-            offset=offset,
-        )
-        for p in results:
-            facts.append(p.payload)
-        if offset is None:
-            break
-    return facts
-
-
-async def fetch_session_turns(
-    client: AsyncQdrantClient,
-    sample_id: str,
-    session_id: str,
-) -> list[dict]:
-    """Return all conversation turns for a given (sample_id, session_id), ordered by dia_id."""
-    turns: list[dict] = []
-    offset = None
-    while True:
-        results, offset = await client.scroll(
-            collection_name=TURNS_COLLECTION,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(key="sample_id",  match=MatchValue(value=sample_id)),
-                    FieldCondition(key="session_id", match=MatchValue(value=session_id)),
-                ]
-            ),
             with_payload=True,
             with_vectors=False,
             limit=250,
             offset=offset,
         )
         for p in results:
-            turns.append(p.payload)
+            fact = dict(p.payload)
+            # payload already contains 'id' via to_qdrant_payload(), but we
+            # capture the Qdrant point id directly as a safety net
+            if "id" not in fact:
+                fact["id"] = str(p.id)
+            facts.append(fact)
         if offset is None:
             break
-    # Sort by dia_id which encodes turn order (e.g. "D4:11" → session 4, turn 11)
-    def _dia_sort_key(t: dict) -> tuple[int, int]:
-        raw = t.get("dia_id", "D0:0")
-        parts = re.findall(r"\d+", raw)
-        return (int(parts[0]) if parts else 0, int(parts[1]) if len(parts) > 1 else 0)
-
-    turns.sort(key=_dia_sort_key)
-    return turns
+    return facts
 
 
-def format_turns(turns: list[dict]) -> tuple[str, str]:
-    """Return (session_datetime, formatted_dialogue_string) for a list of turns."""
-    if not turns:
-        return "", ""
-    session_dt = turns[0].get("session_datetime", "")
-    lines = [f"{t['speaker']}: {t['text']}" for t in turns if t.get("text")]
-    return session_dt, " | ".join(lines)
+_SESSION_KEY_RE = re.compile(r"^session_(\d+)$")
+
+
+def load_turns_index(data_path: Path) -> dict[str, dict[str, list[dict]]]:
+    """Build {conv_id: {session_id: [turns]}} from locomo10.json.
+
+    Each turn dict has keys: dia_id, speaker, text.
+    """
+    with open(data_path, encoding="utf-8") as f:
+        dataset: list[dict] = json.load(f)
+
+    index: dict[str, dict[str, list[dict]]] = {}
+    for entry in dataset:
+        conv_id: str = entry["sample_id"]
+        conv: dict = entry["conversation"]
+        sessions: dict[str, list[dict]] = {}
+        for key, value in conv.items():
+            m = _SESSION_KEY_RE.match(key)
+            if not m:
+                continue
+            session_id = f"session_{m.group(1)}"
+            turns = [
+                {"dia_id": t["dia_id"], "speaker": t["speaker"], "text": t["text"]}
+                for t in value
+            ]
+            turns.sort(key=_dia_sort_key)
+            sessions[session_id] = turns
+        index[conv_id] = sessions
+    return index
+
+
+def get_session_turns(
+    turns_index: dict[str, dict[str, list[dict]]],
+    conv_id: str,
+    session_id: str,
+) -> list[dict]:
+    """Return turns for a given (conv_id, session_id) from the local index."""
+    return turns_index.get(conv_id, {}).get(session_id, [])
 
 
 async def main() -> None:
@@ -167,82 +201,99 @@ async def main() -> None:
     rng = random.Random(SEED)
 
     print("Fetching all user_ids from facts collection …")
-    user_ids = await scroll_all_user_ids(client)
-    print(f"  Found {len(user_ids)} namespaces")
+    all_user_ids = await scroll_all_user_ids(client)
+    print(f"  Found {len(all_user_ids)} namespaces")
 
-    # Per-namespace quota: divide evenly, give remainder to first namespaces
-    quota_base  = TARGET_TOTAL // len(user_ids)
-    quota_extra = TARGET_TOTAL  % len(user_ids)
+    # Group user_ids by conv_id so we can balance speakers per conversation
+    conv_to_uids: dict[str, list[str]] = {}
+    for uid in all_user_ids:
+        conv_id, _ = parse_user_id(uid)
+        conv_to_uids.setdefault(conv_id, []).append(uid)
+
+    print(f"  Conversations: {sorted(conv_to_uids)}")
 
     sampled_facts: list[dict] = []
 
-    for i, uid in enumerate(user_ids):
-        quota = quota_base + (1 if i < quota_extra else 0)
-        facts = await scroll_facts_for_user(client, uid)
-        chosen = rng.sample(facts, min(quota, len(facts)))
-        sampled_facts.extend(chosen)
-        print(f"  {uid}: {len(facts)} facts → sampled {len(chosen)}")
+    for conv_id in sorted(conv_to_uids):
+        speaker_uids = sorted(conv_to_uids[conv_id])
+        n_speakers = len(speaker_uids)
+        per_speaker = TARGET_PER_CONV // n_speakers
+        remainder = TARGET_PER_CONV % n_speakers
+
+        print(f"\n  {conv_id} ({n_speakers} speakers):")
+        for i, uid in enumerate(speaker_uids):
+            quota = per_speaker + (1 if i < remainder else 0)
+            facts = await scroll_facts_for_user(client, uid)
+            chosen = rng.sample(facts, min(quota, len(facts)))
+            sampled_facts.extend(chosen)
+            _, slug = parse_user_id(uid)
+            print(f"    {slug}: {len(facts)} facts → sampled {len(chosen)}")
 
     print(f"\nTotal sampled: {len(sampled_facts)} facts")
-    print("Fetching source session turns …")
+    print("Loading locomo turns from local JSON …")
+    turns_index = load_turns_index(LOCOMO_DATA_PATH)
+    print(f"  Loaded turns for {len(turns_index)} conversations")
+    print("Resolving source turns …")
 
-    # Cache turns per (sample_id, session_id) to avoid redundant requests
-    turns_cache: dict[tuple[str, str], list[dict]] = {}
     rows: list[dict] = []
 
     for fact in sampled_facts:
-        uid        = fact.get("user_id", "")
-        session_id = fact.get("session_id", "")
-        content    = fact.get("content", "")
+        uid = fact.get("user_id", "")
+        session_id = fact.get("session_id", "") or ""
+        content = fact.get("content", "")
+        fact_id = fact.get("id", "")
 
         conv_id, speaker_slug = parse_user_id(uid)
 
-        cache_key = (conv_id, session_id)
-        if cache_key not in turns_cache:
-            turns_cache[cache_key] = await fetch_session_turns(client, conv_id, session_id)
+        turns = get_session_turns(turns_index, conv_id, session_id)
 
-        turns = turns_cache[cache_key]
-        session_dt, dialogue = format_turns(turns)
-
-        # Resolve the display speaker name from the turns (handles casing)
+        # Resolve display speaker name from actual turn data (handles casing)
         speaker_display = speaker_slug
         for t in turns:
             if t.get("speaker", "").lower() == speaker_slug.lower():
                 speaker_display = t["speaker"]
                 break
 
+        best = find_best_turn(content, turns)
+        source_turn_id = best["dia_id"] if best else session_id
+        source_utterance = best.get("text", "") if best else ""
+
         rows.append({
-            "fact_text":       content,
-            "conversation_id": conv_id,
-            "speaker":         speaker_display,
-            "session_id":      session_id,
-            "session_datetime": session_dt,
-            "source_turns":    dialogue,
-            "is_relevant":     "",
+            "fact_id": fact_id,
+            "conv_id": conv_id,
+            "speaker": speaker_display,
+            "fact_text": content,
+            "source_turn_id": source_turn_id,
+            "source_utterance": source_utterance,
+            "label_correct": "",
+            "label_attribution": "",
+            "notes": "",
         })
 
     await client.close()
 
-    # Write CSV
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "fact_text", "conversation_id", "speaker",
-        "session_id", "session_datetime", "source_turns", "is_relevant",
-    ]
     with open(OUTPUT_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"Wrote {len(rows)} rows → {OUTPUT_PATH}")
-    print()
+    print(f"\nWrote {len(rows)} rows → {OUTPUT_PATH}")
 
-    # Summary
-    from collections import Counter
-    by_conv = Counter(r["conversation_id"] for r in rows)
-    print("Rows per conversation:")
-    for conv_id, count in sorted(by_conv.items()):
-        print(f"  {conv_id}: {count}")
+    by_conv = Counter(r["conv_id"] for r in rows)
+    print("\nRows per conversation:")
+    for cid, cnt in sorted(by_conv.items()):
+        # also show speaker breakdown
+        speakers = Counter(r["speaker"] for r in rows if r["conv_id"] == cid)
+        breakdown = ", ".join(f"{sp}={c}" for sp, c in sorted(speakers.items()))
+        print(f"  {cid}: {cnt}  ({breakdown})")
+
+    print("\nFirst 5 rows:")
+    for r in rows[:5]:
+        fid = r["fact_id"][:8] if r["fact_id"] else "?"
+        ft = r["fact_text"][:55]
+        su = r["source_utterance"][:45]
+        print(f"  {fid}… | {r['conv_id']} | {r['speaker']} | {ft}… | {r['source_turn_id']} | {su}…")
 
 
 if __name__ == "__main__":
