@@ -40,7 +40,7 @@ for bars, values, bold, fs, col in [
     (b3, EID_V1,  False, 7, "#555555"),
     (b4, EID_V2,  True,  9, "black"),
 ]:
-    for bar, val in zip(bars, values):
+    for bar, val in zip(bars, values, strict=False):
         ax.text(
             bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
             f"{val:.1f}",
@@ -57,7 +57,7 @@ ax.annotate(
     "",
     xy=(x_rag + WIDTH / 2, y_bracket),
     xytext=(x_v2 + WIDTH / 2, y_bracket),
-    arrowprops=dict(arrowstyle="<->", color="black", lw=1.2),
+    arrowprops={"arrowstyle": "<->", "color": "black", "lw": 1.2},
 )
 ax.text(
     (x_rag + x_v2 + WIDTH) / 2, y_bracket + 1,

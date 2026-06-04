@@ -1,6 +1,6 @@
 """Figure 5 — Efficiency frontier: LLM calls vs accuracy."""
-import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
+import matplotlib.pyplot as plt
 
 RAG_COLOR      = "#4C72B0"
 PIPELINE_COLOR = "#DD8452"
@@ -71,7 +71,7 @@ ax.annotate(
     "",
     xy=(1.02, 66.6),
     xytext=(0.75, 61.0),
-    arrowprops=dict(arrowstyle="->", color=V2_COLOR, lw=1.5),
+    arrowprops={"arrowstyle": "->", "color": V2_COLOR, "lw": 1.5},
 )
 
 # Legend

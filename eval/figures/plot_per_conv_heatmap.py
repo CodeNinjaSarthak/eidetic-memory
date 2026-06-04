@@ -1,10 +1,11 @@
 """Figure 4 — Per-conversation, per-category accuracy delta heatmap (Eidetic v2 − RAG)."""
 import json
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from collections import defaultdict
 from pathlib import Path
+
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
 
 plt.rcParams.update({
     "figure.dpi": 300,

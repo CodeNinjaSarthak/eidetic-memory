@@ -2,7 +2,6 @@
 
 import json
 import re
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -120,7 +119,7 @@ def main() -> None:
     incorrect = [p for p in pairs if p.get("label") == "WRONG"]
 
     print("=" * 80)
-    print(f"FAILURE ANALYSIS — improvement_week2_full_v1")
+    print("FAILURE ANALYSIS — improvement_week2_full_v1")
     print(f"Overall accuracy: {data['overall']['accuracy']:.1%}  "
           f"({data['overall']['correct']}/{data['overall']['total']})")
     print(f"Total incorrect: {len(incorrect)}")
@@ -163,14 +162,14 @@ def main() -> None:
         examples: list[tuple[dict, str]] = []
 
         # First pass: one per mode
-        for p, mode, reason in classified:
+        for p, mode, _reason in classified:
             if shown_modes[mode] == 0:
                 examples.append((p, mode))
                 shown_modes[mode] += 1
 
         # Second pass: fill up to 8 by most-common mode
         sorted_by_mode = sorted(classified, key=lambda x: -mode_counts[x[1]])
-        for p, mode, reason in sorted_by_mode:
+        for p, mode, _reason in sorted_by_mode:
             if len(examples) >= 8:
                 break
             if (p, mode) not in examples:
@@ -183,7 +182,7 @@ def main() -> None:
             print(f"QUESTION:          {p['question']}")
             print(f"GOLD ANSWER:       {p['gold_answer']}")
             print(f"PREDICTED:         {p['generated_answer']}")
-            print(f"TOP 3 RETRIEVED FACTS:")
+            print("TOP 3 RETRIEVED FACTS:")
             print(format_memories(p.get("memories_retrieved", []), 3))
             print(f"FAILURE MODE:      {mode}")
 

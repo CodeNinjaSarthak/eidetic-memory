@@ -30,7 +30,7 @@ fig, ax = plt.subplots(figsize=(8, 4))
 
 bars = ax.bar(x, SCORES, color=COLORS, width=0.6, edgecolor="white", linewidth=0.5)
 
-for bar, score in zip(bars, SCORES):
+for bar, score in zip(bars, SCORES, strict=False):
     ax.text(
         bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
         f"{score}",
@@ -43,7 +43,7 @@ ax.annotate(
     "",
     xy=(x[3], y_arr),
     xytext=(x[2], y_arr),
-    arrowprops=dict(arrowstyle="<->", color="black", lw=1.5),
+    arrowprops={"arrowstyle": "<->", "color": "black", "lw": 1.5},
 )
 ax.text(
     (x[2] + x[3]) / 2, y_arr + 0.8,
