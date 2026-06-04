@@ -67,14 +67,11 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 | Speaker attribution accuracy | **97.0%** | Wilson 95% CI [91.5, 99.0] |
 | Conflict resolution accuracy | **100%** | 26 test cases (ADD/UPDATE/DELETE/NOOP) |
 
-### Retrieval accuracy (LoCoMo, n=100)
+### Retrieval quality
 
-| K | Hit@K |
-|---|-------|
-| 1 | 11% |
-| 5 | 25% |
-| 10 | 38% |
-| 20 | **56%** |
+25.5% of incorrect answers had the correct fact present in Qdrant but it did not
+reach the top-30 reranked context window — the primary remaining retrieval bottleneck,
+addressable with sparse vector (BM25) retrieval on re-ingestion.
 
 ### End-to-end QA accuracy
 
