@@ -8,7 +8,7 @@
   <img src="https://github.com/CodeNinjaSarthak/eidetic-memory/actions/workflows/ci.yml/badge.svg" />
   <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Gemini%20%7C%20Azure%20%7C%20Groq-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/vector%20store-Qdrant-red?style=flat-square" />
-  <img src="https://img.shields.io/badge/LoCoMo_QA-56.3%25-brightgreen?style=flat-square" />
+  <img src="https://img.shields.io/badge/LoCoMo_QA-66.6%25-brightgreen?style=flat-square" />
 </p>
 
 ---
@@ -17,10 +17,10 @@
 
 - 🧠 **Remembers what matters** — extracts atomic facts from every conversation turn, not raw chat logs
 - ⚡ **Evolves over time** — ADD, UPDATE, DELETE, NOOP decisions keep memory fresh and conflict-free
-- 🎯 **Retrieves the right context** — semantic search + importance reranking surfaces relevant facts at query time
+- 🎯 **Retrieves the right context** — semantic search + neural reranking surfaces the most recent, relevant facts at query time
 - 🗣️ **Multi-party ready** — per-speaker memory isolation prevents cross-speaker contamination in group conversations
 - 🔌 **Any LLM, any time** — swap Claude, Gemini, Azure OpenAI, or Groq with a single env var
-- 📊 **Benchmark-validated** — 56.3% QA accuracy on LoCoMo, +39.3 pp on temporal questions over RAG
+- 📊 **Benchmark-validated** — 66.6% QA accuracy on LoCoMo, +50.2 pp on temporal questions over RAG, at just 1.02 LLM calls per query
 
 ---
 
@@ -30,35 +30,41 @@ Every conversation turn passes through a four-stage pipeline:
 
 ```mermaid
 flowchart TD
-    A[User Message] --> B[ExtractionPipeline]
-    B -->|candidate facts| C[EvolutionEngine]
+    A[User Message] --> CTX["Context Assembly\ncurrent speaker · rolling summary (every 15 turns) · recent msgs (last 10)"]
+    CTX --> B[ExtractionPipeline]
+    B -->|candidate facts + speaker attribution| C[EvolutionEngine]
     C -->|ADD / UPDATE / DELETE / NOOP| D[QdrantMemoryStore]
     D -->|stored embeddings + payloads| E[(Qdrant Vector DB)]
 
     F[Query] --> G[MemoryRetriever]
-    G -->|embed query| H[Vector Search\ntop-k × 3 candidates]
+    G -->|embed query| H["Vector Search\ntop-k × 3 candidates\n(per-speaker namespace)"]
     H --> E
     E -->|candidates| I[Local Cross-Encoder\ncross-encoder/ms-marco-MiniLM-L-6-v2]
     I -->|top-k reranked facts| J[Answer Generation LLM]
     J --> K[Response]
+    J -->|"don't know + non-OD (1.7%)"| L[Two-pass Rephrase]
+    L --> G
 
     style I fill:#8e44ad,color:#fff
     style E fill:#e74c3c,color:#fff
     style J fill:#3498db,color:#fff
+    style CTX fill:#e67e22,color:#fff
 ```
 
 ---
 
 ## 📊 Evaluation
 
-Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) across 10 conversations (n=1540 QA pairs) with per-speaker memory isolation.
+Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) across 10 conversations
+(n=1540 QA pairs) with per-speaker memory isolation.
 
 ### Component accuracy
 
 | Metric | Score | Details |
 |--------|-------|---------|
 | Fact extraction recall | **95.0%** | n=100, QA pairs with evidence |
-| Fact extraction precision | **52%** | Relevant facts / total extracted |
+| Fact extraction precision | **83.0%** | Wilson 95% CI [74.5, 89.1] |
+| Speaker attribution accuracy | **97.0%** | Wilson 95% CI [91.5, 99.0] |
 | Conflict resolution accuracy | **100%** | 26 test cases (ADD/UPDATE/DELETE/NOOP) |
 
 ### Retrieval accuracy (LoCoMo, n=100)
@@ -74,23 +80,31 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 
 | Category | Accuracy |
 |----------|----------|
-| Temporal | **64.2%** |
-| Open-domain | 60.5% |
-| Single-hop | 40.1% |
-| Multi-hop | 40.6% |
-| **Overall** | **56.3%** |
+| Temporal | **75.1%** |
+| Open-domain | 70.5% |
+| Single-hop | 50.4% |
+| Multi-hop | 51.0% |
+| **Overall** | **66.6%** |
+
+Bootstrap 95% CIs: Overall [64.4%, 68.8%], Temporal [69.9%, 80.1%]  
+Average LLM calls per query: **1.02** (two-pass fires on 1.7% of non-open-domain queries)
 
 ### SOTA Comparison (LoCoMo, LLM-as-judge)
 
 | System | Overall | Temporal | Notes |
 |--------|---------|----------|-------|
 | RAG baseline (ours) | 44.4% | 24.9% | Direct retrieval over raw turns |
-| Pipeline v2 (ours) | 46.6% | 57.3% | Per-speaker isolation + round-robin |
-| **Eidetic Memory (ours)** | **56.3%** | **64.2%** | + local cross-encoder (ms-marco-MiniLM-L-6-v2) |
-| Mem0 | ~66.9% | — | 3× more LLM calls per query |
+| Pipeline v2 (ours) | 46.6% | 57.3% | Per-speaker isolation + round-robin, no reranker |
+| Eidetic Memory v1 (ours) | 56.3% | 64.2% | + local cross-encoder |
+| **Eidetic Memory v2 (ours)** | **66.6%** | **75.1%** | + extraction context + prompt opt; 1.02 LLM calls/query |
+| Mem0 | ~66.9% | — | No speaker isolation; ~2× more LLM calls per query |
 | Memobase | 75.78% | 85.05% | — |
 | Hindsight (OSS-20B) | 83.18% | 76.32% | — |
 | Hindsight (OSS-120B) | 85.67% | 79.44% | — |
+
+Eidetic Memory v2 is the only system in this comparison with per-speaker namespace
+isolation and a neural reranking step. Its temporal score (75.1%) is within noise of
+Hindsight-20B (76.3%) at a fraction of the model scale.
 
 ### Progress
 
@@ -104,18 +118,20 @@ Evaluated on the [LoCoMo benchmark](https://github.com/snap-research/locomo) acr
 | + Isolation + RR + local cross-encoder | 55.8% | n=233 |
 | + Isolation + score-based + local cross-encoder | 55.8% | n=233 — merge strategy irrelevant |
 | + NER + two-pass + local cross-encoder | 56.6% | n=233 |
-| **+ Local cross-encoder (full run)** | **56.3%** | Full n=1540, all 10 convs, v2 judge |
+| + Local cross-encoder (full run, v1) | 56.3% | Full n=1540, all 10 convs |
+| + Extraction context (rolling summary + speaker attribution) | 64.6% | Full n=1540 (+8.3 pp) |
+| **+ Generation prompt optimization (v2, canonical)** | **66.6%** | Full n=1540 (+2.0 pp) |
 
 ### Retrieval Architecture
 
 ```mermaid
 flowchart LR
-    Q[Question] --> VA["Vector Search<br/>Speaker A namespace"]
-    Q --> VB["Vector Search<br/>Speaker B namespace"]
-    VA -->|top-k×3 facts| RR["Round-Robin Merge<br/>zip_longest interleave"]
+    Q[Question] --> VA["Vector Search\nSpeaker A namespace"]
+    Q --> VB["Vector Search\nSpeaker B namespace"]
+    VA -->|top-k×3 facts| RR["Round-Robin Merge\nzip_longest interleave"]
     VB -->|top-k×3 facts| RR
-    RR -->|combined candidates| JR["Local Cross-Encoder<br/>(ms-marco-MiniLM-L-6-v2)"]
-    JR -->|top-k reranked| LLM["Answer Generation<br/>1 LLM call"]
+    RR -->|180 candidates| JR["Local Cross-Encoder\n(ms-marco-MiniLM-L-6-v2)"]
+    JR -->|top-30 reranked| LLM["Answer Generation\n1 LLM call"]
     LLM --> ANS[Answer]
     style JR fill:#8e44ad,color:#fff
     style LLM fill:#3498db,color:#fff
