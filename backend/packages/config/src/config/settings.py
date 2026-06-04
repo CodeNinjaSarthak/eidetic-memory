@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # LLM Provider
-    llm_provider: Literal["claude", "gemini", "azure", "groq"] = "claude"
+    llm_provider: Literal["claude", "gemini", "azure", "groq", "openai"] = "claude"
 
     # Claude
     anthropic_api_key: SecretStr | None = None
@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     azure_openai_api_key: SecretStr | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_deployment: str | None = None
+
+    # OpenAI
+    openai_api_key: SecretStr | None = None
+    openai_model: str = "gpt-4.1"
 
     # Qdrant
     qdrant_url: str
@@ -92,5 +96,8 @@ class Settings(BaseSettings):
 
         if self.llm_provider == "groq" and not self.groq_api_key:
             raise ValueError("groq_api_key is required when llm_provider is 'groq'")
+
+        if self.llm_provider == "openai" and not self.openai_api_key:
+            raise ValueError("openai_api_key is required when llm_provider is 'openai'")
 
         return self

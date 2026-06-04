@@ -76,6 +76,7 @@ class MemoryManager:
         session_id: str | None = None,
         conversation_summary: str | None = None,
         recent_messages: list[Message] | None = None,
+        current_speaker: str | None = None,
     ) -> list[MemoryFact]:
         """Extract facts from a conversation pair and evolve the memory store.
 
@@ -85,12 +86,13 @@ class MemoryManager:
             session_id: Optional session identifier.
             conversation_summary: Optional summary of the conversation so far.
             recent_messages: Optional recent messages for context.
+            current_speaker: Optional name of the speaker whose turn is being processed.
 
         Returns:
             List of MemoryFact instances that were added or updated.
         """
         candidates = await self._extraction.extract(
-            pair, conversation_summary, recent_messages
+            pair, conversation_summary, recent_messages, current_speaker
         )
 
         if not candidates:

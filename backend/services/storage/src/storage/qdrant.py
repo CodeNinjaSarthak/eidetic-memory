@@ -37,7 +37,7 @@ class QdrantMemoryStore(AbstractMemoryStore):
         collection_name: str = "memories",
         embedding_dimension: int = 1536,
     ) -> None:
-        self._client = AsyncQdrantClient(url=url, api_key=api_key)
+        self._client = AsyncQdrantClient(url=url, api_key=api_key, timeout=60)
         self._collection_name = collection_name
         self._embedding_dimension = embedding_dimension
 
@@ -71,6 +71,11 @@ class QdrantMemoryStore(AbstractMemoryStore):
                 collection_name=self._collection_name,
                 field_name="user_id",
                 field_schema="keyword",
+            )
+            await self._client.create_payload_index(
+                collection_name=self._collection_name,
+                field_name="content",
+                field_schema="text",
             )
             logger.info("Created Qdrant collection '%s'", self._collection_name)
         QdrantMemoryStore._initialized = True

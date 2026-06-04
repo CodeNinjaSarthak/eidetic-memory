@@ -6,6 +6,7 @@ from llm.generation.base import AbstractLLMService, LLMError
 from llm.generation.claude import ClaudeService
 from llm.generation.gemini import GeminiService
 from llm.generation.groq import GroqService
+from llm.generation.openai_service import OpenAIService
 
 __all__ = [
     "AbstractEmbeddingService",
@@ -18,4 +19,5 @@ __all__ = [
     "GroqService",
     "LLMError",
     "OpenAIEmbeddingService",
+    "OpenAIService",
 ]
