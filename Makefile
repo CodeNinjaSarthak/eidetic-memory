@@ -46,5 +46,7 @@ run-mem0-baseline:
 		--conv-ids conv-26 conv-30 conv-41 conv-42 conv-43 conv-44 conv-47 conv-48 conv-49 conv-50 \
 		--skip-ingestion \
 		--collection mem0_locomo_batched \
+		--workers 5 \
+		--qa-workers 10 \
 		--output eval/results/qa_mem0_baseline_results.json \
 		> eval/logs/mem0_baseline.log 2>&1
