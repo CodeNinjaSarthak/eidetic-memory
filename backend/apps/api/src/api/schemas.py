@@ -1,6 +1,7 @@
 """Request and response schemas for the API layer."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -75,3 +76,33 @@ class ChatResponse(BaseModel):
 
     reply: str
     facts_added: list[MemoryResponse]
+
+
+class RankedMemory(BaseModel):
+    """A memory fact with its rank before and after cross-encoder reranking."""
+
+    content: str
+    user_id: str
+    rank_before: int
+    rank_after: int | None = None
+
+
+class DemoQueryRequest(BaseModel):
+    """Request body for the read-only LoCoMo demo query endpoint."""
+
+    conversation_id: str
+    question: str
+    question_type: Literal["factual", "open_domain"] = "factual"
+
+
+class DemoQueryResponse(BaseModel):
+    """Response body for a demo query, including before/after rerank views."""
+
+    answer: str
+    memories_top5_cosine: list[RankedMemory]
+    memories_top5_reranked: list[RankedMemory]
+    two_pass_would_fire: bool
+    conversation_id: str
+    speaker_a: str
+    speaker_b: str
+    question_type: str

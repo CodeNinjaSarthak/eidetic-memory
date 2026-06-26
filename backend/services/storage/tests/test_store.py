@@ -171,12 +171,14 @@ def test_qdrant_store_is_constructable_from_settings() -> None:
         qdrant_url="http://localhost:6333",
         qdrant_api_key="test-key",
         qdrant_collection_name="test-collection",
-        embedding_dimension=768,
+        embedding_dimension=1536,
         llm_provider="claude",
         anthropic_api_key="sk-ant-test",
+        embedding_provider="openai",
+        openai_api_key="sk-openai-test",
     )
 
     store = QdrantMemoryStore.from_settings(settings)
 
     assert store._collection_name == "test-collection"
-    assert store._embedding_dimension == 768
+    assert store._embedding_dimension == 1536

@@ -11,6 +11,8 @@ _MINIMUM_VALID = {
     "qdrant_url": "http://localhost:6333",
     "llm_provider": "claude",
     "anthropic_api_key": "sk-ant-test-key",
+    "embedding_provider": "openai",
+    "openai_api_key": "sk-openai-test-key",
 }
 
 
@@ -86,14 +88,15 @@ def test_memory_pipeline_defaults_are_correct():
     settings = Settings(**_MINIMUM_VALID)
 
     assert settings.recency_window == 10
-    assert settings.similarity_top_k == 10
+    assert settings.similarity_top_k == 30
 
 
 def test_embedding_defaults_are_correct():
     settings = Settings(**_MINIMUM_VALID)
 
-    assert settings.embedding_dimension == 768
-    assert settings.embedding_model == "gemini-embedding-exp-03-07"
+    assert settings.embedding_dimension == 1536
+    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.embedding_provider == "openai"
 
 
 def test_settings_rejects_invalid_api_env():

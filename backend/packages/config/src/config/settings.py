@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     # LLM Provider
-    llm_provider: Literal["claude", "gemini", "azure", "groq", "openai"] = "claude"
+    llm_provider: Literal["claude", "gemini", "azure", "groq", "openai"] = "azure"
 
     # Claude
     anthropic_api_key: SecretStr | None = None
@@ -50,18 +50,20 @@ class Settings(BaseSettings):
     qdrant_collection_name: str = "eidetic_memories"
 
     # Embedding model
-    embedding_model: str = "gemini-embedding-exp-03-07"
-    embedding_dimension: int = Field(default=768, gt=0)
+    embedding_provider: Literal["azure", "openai"] = "azure"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = Field(default=1536, gt=0)
 
     # Memory pipeline
     memory_extraction_model: str = "gemini-2.0-flash"
     recency_window: int = Field(default=10, gt=0)
-    similarity_top_k: int = Field(default=10, gt=0)
+    similarity_top_k: int = Field(default=30, gt=0)
 
     # API
     api_host: str = "0.0.0.0"
     api_port: int = Field(default=8000, gt=0, lt=65536)
     api_env: Literal["development", "production", "test"] = "development"
+    cors_allowed_origins: str = "http://localhost:3000"
 
     # Eval
     eval_llm_judge_model: str = "gemini-2.0-flash"
@@ -99,5 +101,31 @@ class Settings(BaseSettings):
 
         if self.llm_provider == "openai" and not self.openai_api_key:
             raise ValueError("openai_api_key is required when llm_provider is 'openai'")
+
+        if self.embedding_provider in ("azure", "openai") and self.embedding_dimension != 1536:
+            raise ValueError(
+                f"embedding_dimension must be 1536 for text-embedding-3-small "
+                f"(got {self.embedding_dimension})"
+            )
+
+        if self.embedding_provider == "azure":
+            missing = [
+                name
+                for name, val in [
+                    ("azure_openai_api_key", self.azure_openai_api_key),
+                    ("azure_openai_endpoint", self.azure_openai_endpoint),
+                ]
+                if not val
+            ]
+            if missing:
+                raise ValueError(
+                    f"embedding_provider='azure' requires: azure_openai_api_key, "
+                    f"azure_openai_endpoint. Missing: {', '.join(missing)}"
+                )
+
+        if self.embedding_provider == "openai" and not self.openai_api_key:
+            raise ValueError(
+                "openai_api_key is required when embedding_provider is 'openai'"
+            )
 
         return self

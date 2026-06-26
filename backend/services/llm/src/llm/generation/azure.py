@@ -57,7 +57,13 @@ class AzureService(AbstractLLMService):
         )
         self._deployment = resolved_deployment
 
-    async def complete(self, messages: list[dict[str, str]], system: str = "") -> str:
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        system: str = "",
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
         """Generate a text completion from a list of messages.
 
         Args:
@@ -76,11 +82,14 @@ class AzureService(AbstractLLMService):
                 sdk_messages.append({"role": "system", "content": system})
             sdk_messages.extend(messages)
 
-            response = await self._client.chat.completions.create(
-                model=self._deployment,
-                messages=sdk_messages,
-                temperature=0,
-            )
+            create_kwargs: dict = {
+                "model": self._deployment,
+                "messages": sdk_messages,
+                "temperature": temperature,
+            }
+            if max_tokens is not None:
+                create_kwargs["max_tokens"] = max_tokens
+            response = await self._client.chat.completions.create(**create_kwargs)
             return response.choices[0].message.content
         except LLMError:
             raise

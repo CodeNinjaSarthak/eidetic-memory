@@ -12,7 +12,13 @@ class AbstractLLMService(ABC):
     """Interface for LLM text generation."""
 
     @abstractmethod
-    async def complete(self, messages: list[dict[str, str]], system: str = "") -> str:
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        system: str = "",
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
         """Generate a text completion from a list of messages.
 
         Args:

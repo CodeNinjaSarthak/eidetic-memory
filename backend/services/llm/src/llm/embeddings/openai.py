@@ -1,5 +1,6 @@
 """OpenAI-backed embedding service implementation."""
 
+import math
 import os
 
 from openai import AsyncOpenAI
@@ -49,7 +50,11 @@ class OpenAIEmbeddingService(AbstractEmbeddingService):
                 input=text,
                 model=self._model,
             )
-            return response.data[0].embedding
+            values = list(response.data[0].embedding)
+            norm = math.sqrt(sum(v * v for v in values))
+            if norm > 0:
+                values = [v / norm for v in values]
+            return values
         except Exception as e:
             raise EmbeddingError(f"Failed to embed text: {e}") from e
 
@@ -70,8 +75,13 @@ class OpenAIEmbeddingService(AbstractEmbeddingService):
                 input=texts,
                 model=self._model,
             )
-            return [
-                item.embedding for item in sorted(response.data, key=lambda x: x.index)
-            ]
+            embeddings = []
+            for item in sorted(response.data, key=lambda x: x.index):
+                values = list(item.embedding)
+                norm = math.sqrt(sum(v * v for v in values))
+                if norm > 0:
+                    values = [v / norm for v in values]
+                embeddings.append(values)
+            return embeddings
         except Exception as e:
             raise EmbeddingError(f"Failed to embed batch: {e}") from e

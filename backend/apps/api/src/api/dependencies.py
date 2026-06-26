@@ -6,7 +6,9 @@ from typing import Annotated
 from fastapi import Depends
 
 from config.settings import Settings
-from llm.embeddings.gemini import GeminiEmbeddingService
+from llm.embeddings.azure import AzureEmbeddingService
+from llm.embeddings.base import AbstractEmbeddingService
+from llm.embeddings.openai import OpenAIEmbeddingService
 from llm.generation.azure import AzureService
 from llm.generation.base import AbstractLLMService
 from llm.generation.claude import ClaudeService
@@ -22,6 +24,26 @@ from storage.qdrant import QdrantMemoryStore
 def get_settings() -> Settings:
     """Return cached application settings."""
     return Settings()
+
+
+def _build_embedding_service(settings: Settings) -> AbstractEmbeddingService:
+    """Create the embedding service for the configured provider.
+
+    Always uses text-embedding-3-small at 1536D — hardcoded to match the
+    eidetic_memories collection. Never passes a dimensions= override.
+    """
+    match settings.embedding_provider:
+        case "azure":
+            return AzureEmbeddingService(
+                api_key=settings.azure_openai_api_key.get_secret_value(),
+                endpoint=settings.azure_openai_endpoint,
+                deployment="text-embedding-3-small",
+            )
+        case "openai":
+            return OpenAIEmbeddingService(
+                api_key=settings.openai_api_key.get_secret_value(),
+                model="text-embedding-3-small",
+            )
 
 
 def _build_llm_service(settings: Settings) -> AbstractLLMService:
@@ -65,12 +87,7 @@ def get_memory_manager(
     global _memory_manager
     if _memory_manager is None:
         store = QdrantMemoryStore.from_settings(settings)
-        embedding_service = GeminiEmbeddingService(
-            api_key=settings.google_api_key.get_secret_value()
-            if settings.google_api_key
-            else None,
-            model=settings.embedding_model,
-        )
+        embedding_service = _build_embedding_service(settings)
         llm_service = _build_llm_service(settings)
         _memory_manager = MemoryManager(
             store=store,
@@ -91,16 +108,12 @@ def get_memory_retriever(
     global _memory_retriever
     if _memory_retriever is None:
         store = QdrantMemoryStore.from_settings(settings)
-        embedding_service = GeminiEmbeddingService(
-            api_key=settings.google_api_key.get_secret_value()
-            if settings.google_api_key
-            else None,
-            model=settings.embedding_model,
-        )
+        embedding_service = _build_embedding_service(settings)
         _memory_retriever = MemoryRetriever(
             store=store,
             embedding_service=embedding_service,
             top_k=settings.similarity_top_k,
+            reranker_fetch_multiplier=3,
         )
     return _memory_retriever
 
@@ -116,3 +129,29 @@ def get_llm_service(
     if _llm_service is None:
         _llm_service = _build_llm_service(settings)
     return _llm_service
+
+
+_demo_retriever: MemoryRetriever | None = None
+
+
+def get_demo_retriever(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> MemoryRetriever:
+    """Return a cached MemoryRetriever for the demo endpoint.
+
+    Uses top_k=similarity_top_k (30), no Jina, fetch_multiplier=3 so
+    the demo endpoint receives 90 candidates per speaker for local rerank.
+    """
+    global _demo_retriever
+    if _demo_retriever is None:
+        store = QdrantMemoryStore.from_settings(settings)
+        embedding_service = _build_embedding_service(settings)
+        _demo_retriever = MemoryRetriever(
+            store=store,
+            embedding_service=embedding_service,
+            top_k=settings.similarity_top_k,
+            jina_api_key=None,
+            reranker_fetch_multiplier=3,
+            rerank_by_importance=False,
+        )
+    return _demo_retriever
