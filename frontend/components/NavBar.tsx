@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const links = [
   { href: "/memories", label: "Memory Browser" },
   { href: "/chat", label: "Chat" },
+  { href: "/demo", label: "Demo" },
 ] as const;
 
 export default function NavBar() {

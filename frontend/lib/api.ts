@@ -120,3 +120,36 @@ export async function deleteMemory(
     { method: "DELETE" },
   );
 }
+
+export interface RankedMemory {
+  content: string;
+  user_id: string;
+  rank_before: number;
+  rank_after: number | null;
+}
+
+export interface DemoQueryResponse {
+  answer: string;
+  memories_top5_cosine: RankedMemory[];
+  memories_top5_reranked: RankedMemory[];
+  two_pass_would_fire: boolean;
+  conversation_id: string;
+  speaker_a: string;
+  speaker_b: string;
+  question_type: string;
+}
+
+export async function demoQuery(
+  conversationId: string,
+  question: string,
+  questionType: string = "factual",
+): Promise<DemoQueryResponse> {
+  return apiFetch<DemoQueryResponse>("/demo/query", {
+    method: "POST",
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      question,
+      question_type: questionType,
+    }),
+  });
+}
