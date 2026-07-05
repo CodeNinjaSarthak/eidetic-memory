@@ -109,7 +109,7 @@ Temporal gain over RAG positive across all 10 conversations (+17pp to +68pp).
 - Temporal accuracy: +50.2 pp over RAG (24.9% → 75.1%)
 - Temporal v2 (75.1%) within noise of Hindsight-20B (76.3%) at fraction of model scale
 - Multi-hop v2 (51.0%) exceeds Memobase (46.9%)
-- Overall v2 (66.6%) at parity with Mem0 (66.9%) at just 1.02 LLM calls/query
+- Overall v2 (66.6%) trails Mem0 OSS under controlled comparison (75.3%); temporal v2 (75.1%) leads Mem0 controlled temporal (69.2%), at equal LLM cost (1.02 vs 1.0 calls/query)
 - Open-domain regression from v1 fully resolved (60.5% → 70.5%, above RAG)
 
 ---
@@ -121,14 +121,19 @@ Temporal gain over RAG positive across all 10 conversations (+17pp to +68pp).
 | Pipeline v2 (ours)                  | 38.7%     | 57.3%   | 28.1%    | 47.3%      | 46.6%     | ✓       | ✗      |
 | Eidetic Memory v1                   | 40.1%     | 64.2%   | 40.6%    | 60.5%      | 56.3%     | ✓       | ✓      |
 | **Eidetic Memory v2 ← CANONICAL**   | **50.4%** |**75.1%**| **51.0%**| **70.5%**  | **66.6%** | **✓**   | **✓**  |
-| Mem0                                | —         | —       | —        | —          | 66.9%     | ✗       | ✗      |
+| Mem0 (controlled, same judge/embed) | 68.1%     | 69.2%   | 57.3%    | 82.0%      | 75.3%     | ✗       | ✗      |
 | Memobase                            | 70.92%    | 85.05%  | 46.88%   | 77.17%     | 75.78%    | ✗       | ✗      |
 | Hindsight (OSS-20B)                 | 74.11%    | 76.32%  | 64.58%   | 90.96%     | 83.18%    | ✗       | ✓      |
 | Hindsight (OSS-120B)                | 76.79%    | 79.44%  | 62.50%   | 93.68%     | 85.67%    | ✗       | ✓      |
 
 Gap to Hindsight-120B: 19.1 pp overall (down from 29.4 pp in v1).
-Note: Mem0 2026 algorithm (92.5%) and ByteRover 2.0 (92.2%) use different judge
-models and harnesses — not directly comparable without controlled re-evaluation.
+Mem0 (controlled) above is our own re-run of the Mem0 OSS SDK under matched
+conditions (Azure gpt-4.1 answerer + judge, text-embedding-3-small, top_k=10;
+eval/results/qa_mem0_baseline_results.json, 2026-06-24) — not Mem0's
+self-reported 66.9%, which used a different, unreleased evaluation harness.
+Note: Mem0's newer 2026 platform algorithm (92.5%, top_k=200, GPT-5
+extraction) and ByteRover 2.0 (92.2%) use categorically different pipelines
+and judges — not reproducible under our conditions, not directly comparable.
 
 ---
 
@@ -161,7 +166,9 @@ EMBEDDING_MODEL=text-embedding-3-small
 "Per-speaker memory isolation with rolling extraction context and cross-encoder
 reranking (cross-encoder/ms-marco-MiniLM-L-6-v2, 66M parameters, local CPU,
 no API key) achieves 66.6% overall accuracy and 75.1% on temporal reasoning
-on LoCoMo (n=1540) — a +50.2 pp gain over RAG on temporal queries and parity
-with Mem0 (66.9%). The system averages 1.02 LLM calls per query (two-pass
-fires on 1.7% of non-open-domain queries), making it the most call-efficient
-system above 65% accuracy with a published call count."
+on LoCoMo (n=1540) — a +50.2 pp gain over RAG on temporal queries. The system
+averages 1.02 LLM calls per query (two-pass fires on 1.7% of non-open-domain
+queries). Under a controlled re-evaluation of Mem0 OSS on identical
+conditions (same Azure gpt-4.1 answerer/judge, same embedder), Eidetic
+Memory trails Mem0 overall (66.6% vs 75.3%) but leads on temporal reasoning
+(75.1% vs 69.2%), at equal LLM cost (1.02 vs 1.0 calls/query)."

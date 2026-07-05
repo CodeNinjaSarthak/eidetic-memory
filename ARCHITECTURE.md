@@ -52,14 +52,27 @@ Circular dependencies between these layers are not allowed.
 9. `QdrantMemoryStore` executes the decided action (insert, overwrite, or delete)
 10. The response returns all newly added or updated `MemoryFact` objects
 
-### POST /memories/search — semantic retrieval
+### POST /memories/search — semantic retrieval (legacy path — not the demo or paper surface)
+
+> This endpoint is **not** part of the demo or the paper's reported numbers. It predates
+> the local cross-encoder work and still reranks via the external Jina Reranker API
+> (`retriever.py` → `jina-reranker-v2-base-multilingual`, falling back to raw vector order
+> if no Jina key is set). The demo (`/demo/query`) and all eval scripts use the local
+> cross-encoder (`reranker.py`, `ms-marco-MiniLM-L-6-v2`) instead — see below.
 
 1. Request arrives with `query`, `user_id`, and `top_k`
 2. `MemoryRetriever.retrieve()` embeds the query string
 3. Qdrant returns the top-k most similar memories for that user
-4. Results are reranked by the local cross-encoder (`ms-marco-MiniLM-L-6-v2`, 66M params,
-   CPU inference, ~5ms per pair once warm)
+4. Results are reranked by the Jina Reranker API if `jina_api_key` is configured,
+   otherwise returned in raw vector-similarity order (no local cross-encoder here)
 5. The response returns the matched `MemoryFact` objects in reranked order
+
+### Demo and eval retrieval path — local cross-encoder (this is what the paper reports)
+
+The `/demo/query` endpoint and all `eval/eval_qa_accuracy.py` runs (via `--local-rerank`)
+use `reranker.py`'s local cross-encoder (`ms-marco-MiniLM-L-6-v2`, 66M params, CPU
+inference, ~5ms per pair once warm) instead of `MemoryRetriever`/Jina. This is the
+reranker behind every accuracy number in this document and in the paper.
 
 ## Key Design Decisions
 
@@ -106,10 +119,13 @@ Circular dependencies between these layers are not allowed.
     timeout is set to 60s with retry on `ResponseHandlingException` to handle transient
     cloud latency.
 
-13. **Pipeline parameters as config.** `recency_window`, `similarity_top_k`,
-    `summary_interval`, and `reranker_fetch_multiplier` are environment variables with
-    sensible defaults, not hardcoded constants. This makes the pipeline tunable without
-    code changes.
+13. **Pipeline parameters as config, partially.** `recency_window` and `similarity_top_k`
+    are environment variables (`backend/packages/config/src/config/settings.py`) with
+    sensible defaults. `summary_interval` (15 turns) and `reranker_fetch_multiplier` (3x)
+    are **not** env-configurable: `summary_interval` is a hardcoded `% 15` check in
+    `eval/ingest_locomo_production.py`, and `reranker_fetch_multiplier` is a Python
+    default argument (`=3`) in `retriever.py` and `dependencies.py`. Changing either
+    requires a code edit, not an env var.
 
 14. **Embedding model decoupled from LLM provider.** `text-embedding-3-small` (1536-dim,
     via Azure OpenAI) is used for all vector operations regardless of which LLM provider

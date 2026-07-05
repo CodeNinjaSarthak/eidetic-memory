@@ -94,7 +94,7 @@ Average LLM calls per query: **1.02** (two-pass fires on 1.7% of non-open-domain
 | Pipeline v2 (ours) | 46.6% | 57.3% | Per-speaker isolation + round-robin, no reranker |
 | Eidetic Memory v1 (ours) | 56.3% | 64.2% | + local cross-encoder |
 | **Eidetic Memory v2 (ours)** | **66.6%** | **75.1%** | + extraction context + prompt opt; 1.02 LLM calls/query |
-| Mem0 | ~66.9% | — | No speaker isolation; ~2× more LLM calls per query |
+| Mem0 (controlled, same judge/answerer/embedder) | 75.3% | 69.2% | No speaker isolation; equal LLM cost (1.0 calls/query) |
 | Memobase | 75.78% | 85.05% | — |
 | Hindsight (OSS-20B) | 83.18% | 76.32% | — |
 | Hindsight (OSS-120B) | 85.67% | 79.44% | — |
