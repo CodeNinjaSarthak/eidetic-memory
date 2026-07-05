@@ -6,16 +6,15 @@ import type { DemoQueryResponse } from "@/lib/api";
 
 const CONVERSATIONS = [
   { id: "conv-47", label: "conv-47 — James & John" },
-  { id: "conv-26", label: "conv-26 — Caroline & Melanie" },
-  { id: "conv-30", label: "conv-30 — Jon & Gina" },
-  { id: "conv-41", label: "conv-41 — John & Maria" },
-  { id: "conv-42", label: "conv-42 — Joanna & Nate" },
-  { id: "conv-43", label: "conv-43 — Tim & John" },
-  { id: "conv-44", label: "conv-44 — Audrey & Andrew" },
   { id: "conv-48", label: "conv-48 — Deborah & Jolene" },
-  { id: "conv-49", label: "conv-49 — Evan & Sam" },
-  { id: "conv-50", label: "conv-50 — Calvin & Dave" },
+  { id: "conv-42", label: "conv-42 — Joanna & Nate" },
 ] as const;
+
+const EXAMPLE_QUESTIONS: Record<string, string> = {
+  "conv-47": "Which recreational activity was James pursuing on March 16, 2022?",
+  "conv-48": "When did Jolene's mom gift her a pendant?",
+  "conv-42": "When did Nate win his first video game tournament?",
+};
 
 type QuestionType = "factual" | "open_domain";
 
@@ -129,6 +128,22 @@ export default function DemoPage() {
               className="w-full bg-bg-elevated border border-border text-text-primary rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent-teal resize-none"
             />
           </div>
+
+          {EXAMPLE_QUESTIONS[convId] && (
+            <div>
+              <span className="block text-xs text-text-secondary mb-1.5">Try an example:</span>
+              <button
+                onClick={() => {
+                  setQuestion(EXAMPLE_QUESTIONS[convId]);
+                  setQuestionType("factual");
+                }}
+                className="inline-flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:border-border/80 transition-colors text-left"
+              >
+                <span className="shrink-0">→</span>
+                <span>{EXAMPLE_QUESTIONS[convId]}</span>
+              </button>
+            </div>
+          )}
 
           <button
             onClick={() => void handleSubmit()}
