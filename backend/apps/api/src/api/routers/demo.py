@@ -5,10 +5,8 @@ eidetic_memories Qdrant collection. Never writes to Qdrant — retrieval and
 generation only.
 """
 
-import json
 import logging
 from itertools import zip_longest
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -65,24 +63,24 @@ _DISPLAY_TOP_K = 5
 
 _EVAL_USER_ID_PREFIX = "locomo_eval"
 
-# --- LoCoMo conversation map (loaded once at import) ---
-
-_LOCOMO_DATA_PATH = Path(__file__).parents[6] / "eval" / "data" / "locomo10.json"
-
-
-def _load_conv_map() -> dict[str, dict[str, str]]:
-    with open(_LOCOMO_DATA_PATH) as f:
-        data = json.load(f)
-    return {
-        entry["sample_id"]: {
-            "speaker_a": entry["conversation"]["speaker_a"],
-            "speaker_b": entry["conversation"]["speaker_b"],
-        }
-        for entry in data
-    }
-
-
-_CONV_MAP: dict[str, dict[str, str]] = _load_conv_map()
+# --- LoCoMo conversation map ---
+# Speaker names only (sample_id -> speaker_a/speaker_b), extracted from the LoCoMo
+# dataset (eval/data/locomo10.json, CC BY-NC 4.0 — not redistributed here). The demo
+# only needs these names to build Qdrant user_ids and display labels; the actual
+# conversation facts are already ingested into Qdrant and never re-read from the
+# raw dataset at runtime. Hardcoded so the app has no file I/O at import time.
+_CONV_MAP: dict[str, dict[str, str]] = {
+    "conv-26": {"speaker_a": "Caroline", "speaker_b": "Melanie"},
+    "conv-30": {"speaker_a": "Jon", "speaker_b": "Gina"},
+    "conv-41": {"speaker_a": "John", "speaker_b": "Maria"},
+    "conv-42": {"speaker_a": "Joanna", "speaker_b": "Nate"},
+    "conv-43": {"speaker_a": "Tim", "speaker_b": "John"},
+    "conv-44": {"speaker_a": "Audrey", "speaker_b": "Andrew"},
+    "conv-47": {"speaker_a": "James", "speaker_b": "John"},
+    "conv-48": {"speaker_a": "Deborah", "speaker_b": "Jolene"},
+    "conv-49": {"speaker_a": "Evan", "speaker_b": "Sam"},
+    "conv-50": {"speaker_a": "Calvin", "speaker_b": "Dave"},
+}
 
 _context_builder = ContextBuilder()
 
