@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     # Eval
     eval_llm_judge_model: str = "gemini-2.0-flash"
 
+    # Demo access control
+    demo_username: SecretStr | None = None
+    demo_password: SecretStr | None = None
+    demo_only_mode: bool = False
+    demo_daily_query_limit: int = Field(default=200, gt=0)
+    demo_per_ip_minute_limit: int = Field(default=10, gt=0)
+
     @model_validator(mode="after")
     def _validate_provider_credentials(self) -> "Settings":
         """Ensure the selected LLM provider has required credentials."""

@@ -11,7 +11,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.auth import verify_demo_credentials
 from api.dependencies import get_demo_retriever, get_llm_service
+from api.rate_limit import check_demo_rate_limit
 from api.schemas import DemoQueryRequest, DemoQueryResponse, RankedMemory
 from llm.generation.base import AbstractLLMService
 from retrieval import reranker
@@ -21,7 +23,11 @@ from storage.models import MemoryFact
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/demo", tags=["demo"])
+router = APIRouter(
+    prefix="/demo",
+    tags=["demo"],
+    dependencies=[Depends(verify_demo_credentials)],
+)
 
 # --- Eval-matched prompts (verbatim from eval/eval_qa_accuracy.py) ---
 
@@ -114,7 +120,23 @@ def _build_ranked_memories(
     return result
 
 
-@router.post("/query", response_model=DemoQueryResponse)
+@router.get("/auth-check")
+async def demo_auth_check() -> dict[str, bool]:
+    """Validate demo credentials without touching the LLM or embeddings.
+
+    Reaching this handler means the router-level Basic Auth dependency already
+    accepted the credential, so the frontend can verify a credential at login
+    time. Makes zero paid API calls and is deliberately not rate-limited, so a
+    credential check never consumes the /demo/query daily budget.
+    """
+    return {"ok": True}
+
+
+@router.post(
+    "/query",
+    response_model=DemoQueryResponse,
+    dependencies=[Depends(check_demo_rate_limit)],
+)
 async def demo_query(
     payload: DemoQueryRequest,
     retriever: Annotated[MemoryRetriever, Depends(get_demo_retriever)],

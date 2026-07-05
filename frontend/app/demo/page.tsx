@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { demoQuery } from "@/lib/api";
+import DemoAuthGate from "@/components/DemoAuthGate";
+import { useDemoAuth } from "@/hooks/useDemoAuth";
+import { DemoAuthError, demoQuery } from "@/lib/api";
 import type { DemoQueryResponse } from "@/lib/api";
 
 const CONVERSATIONS = [
@@ -33,6 +35,7 @@ function Spinner() {
 }
 
 export default function DemoPage() {
+  const { unlocked, unlock, lock } = useDemoAuth();
   const [convId, setConvId] = useState("conv-47");
   const [questionType, setQuestionType] = useState<QuestionType>("factual");
   const [question, setQuestion] = useState("");
@@ -48,11 +51,20 @@ export default function DemoPage() {
       const data = await demoQuery(convId, question, questionType);
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Query failed");
+      if (err instanceof DemoAuthError) {
+        lock();
+        setError("Session expired or credentials were rejected. Please unlock again.");
+      } else {
+        setError(err instanceof Error ? err.message : "Query failed");
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  if (!unlocked) {
+    return <DemoAuthGate onUnlock={unlock} />;
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

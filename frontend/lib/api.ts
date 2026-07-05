@@ -1,5 +1,60 @@
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Reviewer credential for the demo's HTTP Basic Auth gate. Stored in
+// sessionStorage only (never NEXT_PUBLIC_*, which would bake it into the
+// public JS bundle) and attached as an Authorization header manually.
+const DEMO_AUTH_STORAGE_KEY = "demo_auth_header";
+
+export class DemoAuthError extends Error {
+  constructor() {
+    super("Demo credentials are missing or incorrect");
+    this.name = "DemoAuthError";
+  }
+}
+
+export function setDemoCredentials(username: string, password: string): void {
+  const header = `Basic ${btoa(`${username}:${password}`)}`;
+  window.sessionStorage.setItem(DEMO_AUTH_STORAGE_KEY, header);
+}
+
+export function clearDemoCredentials(): void {
+  window.sessionStorage.removeItem(DEMO_AUTH_STORAGE_KEY);
+}
+
+export function hasDemoCredentials(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.sessionStorage.getItem(DEMO_AUTH_STORAGE_KEY) !== null
+  );
+}
+
+function getDemoAuthHeader(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(DEMO_AUTH_STORAGE_KEY);
+}
+
+/**
+ * Validate a credential against the free /demo/auth-check endpoint before
+ * storing it. Returns true on 200, false on 401. Does NOT store the credential
+ * and does NOT trigger any paid LLM/embedding call — the endpoint only proves
+ * the Basic Auth header. Throws on network/server errors so callers can
+ * distinguish "wrong password" (false) from "couldn't reach the server".
+ */
+export async function checkDemoCredentials(
+  username: string,
+  password: string,
+): Promise<boolean> {
+  const header = `Basic ${btoa(`${username}:${password}`)}`;
+  const res = await fetch(`${BASE_URL}/demo/auth-check`, {
+    headers: { Authorization: header },
+  });
+  if (res.status === 401) return false;
+  if (!res.ok) {
+    throw new Error(`Auth check failed: ${res.status} ${res.statusText}`);
+  }
+  return true;
+}
+
 export interface MessagePayload {
   role: string;
   content: string;
@@ -30,13 +85,20 @@ export interface DeleteResponse {
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const authHeader = getDemoAuthHeader();
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(authHeader && { Authorization: authHeader }),
       ...options?.headers,
     },
   });
+
+  if (res.status === 401) {
+    clearDemoCredentials();
+    throw new DemoAuthError();
+  }
 
   if (!res.ok) {
     let message = `API error: ${res.status} ${res.statusText}`;

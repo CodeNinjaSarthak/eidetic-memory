@@ -12,10 +12,20 @@ from api.dependencies import get_settings
 from api.routers.chat import router as chat_router
 from api.routers.demo import router as demo_router
 from api.routers.memories import router as memories_router
+from config.settings import Settings
 from retrieval import reranker
 from storage.qdrant import QdrantMemoryStore
 
 logging.basicConfig(level=logging.INFO)
+
+
+def should_mount_write_routers(settings: Settings) -> bool:
+    """Return whether chat/memories (write/delete) routers should be mounted.
+
+    False in demo-only deployments so the deployed surface has no write or
+    delete routes at all, regardless of auth.
+    """
+    return not settings.demo_only_mode
 
 
 @asynccontextmanager
@@ -41,9 +51,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(chat_router)
-app.include_router(memories_router)
 app.include_router(demo_router)
+
+if should_mount_write_routers(get_settings()):
+    app.include_router(chat_router)
+    app.include_router(memories_router)
 
 
 @app.get("/health")

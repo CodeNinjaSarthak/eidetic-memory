@@ -56,3 +56,4 @@ eval/results/*.json
 eval/logs/
 eval/checkpoints/
 eval/results/smoke_test*.json
+eval/eval_qa_accuracy_cat1_order_exp.py

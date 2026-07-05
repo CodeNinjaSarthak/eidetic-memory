@@ -109,3 +109,23 @@ def test_api_defaults_are_correct():
 
     assert settings.api_port == 8000
     assert settings.api_env == "development"
+
+
+def test_demo_access_defaults_leave_credentials_unset_and_gate_closed_by_default():
+    settings = Settings(**_MINIMUM_VALID)
+
+    assert settings.demo_username is None
+    assert settings.demo_password is None
+    assert settings.demo_only_mode is False
+    assert settings.demo_daily_query_limit == 200
+    assert settings.demo_per_ip_minute_limit == 10
+
+
+def test_settings_rejects_non_positive_demo_daily_query_limit():
+    with pytest.raises(ValidationError):
+        Settings(**_MINIMUM_VALID, demo_daily_query_limit=0)
+
+
+def test_settings_rejects_non_positive_demo_per_ip_minute_limit():
+    with pytest.raises(ValidationError):
+        Settings(**_MINIMUM_VALID, demo_per_ip_minute_limit=0)
