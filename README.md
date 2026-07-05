@@ -148,14 +148,26 @@ uv sync --all-packages
 cp .env.development.example .env.development
 
 # 3. Run the benchmark (requires ingested memories)
-# Uses ~/eval-venv (sentence-transformers + ONNX); cross-encoder model
-# (~66MB) downloads to ~/.cache/huggingface/ on first run.
-~/eval-venv/bin/python eval/eval_qa_accuracy.py \
+# The cross-encoder model (~66MB) downloads to ~/.cache/huggingface/ on first run.
+# Quick smoke test first (2 conversations, ~2 min) to confirm the pipeline runs:
+uv run python eval/eval_qa_accuracy.py \
+  --conv-ids conv-26 conv-30 \
+  --local-rerank \
+  --output eval/results/smoke_test.json \
+  --concurrency 1
+
+# Full benchmark (all 10 LoCoMo conversations, ~60 min):
+uv run python eval/eval_qa_accuracy.py \
   --conv-ids conv-26 conv-30 conv-41 conv-42 conv-43 conv-44 \
              conv-47 conv-48 conv-49 conv-50 \
   --local-rerank \
   --output eval/results/my_results.json \
   --concurrency 1
+
+# Note: --local-rerank requires `sentence-transformers`, which installs automatically
+# on Linux via the platform-gated dependency in services/retrieval. On macOS/Windows
+# it may need manual install (`uv pip install sentence-transformers`). To simply try
+# the system, use the hosted demo linked at the top of this README.
 ```
 
 See [eval/README.md](eval/README.md) for ingestion instructions and full evaluation documentation.
