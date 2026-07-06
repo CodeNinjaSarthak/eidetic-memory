@@ -1,3 +1,13 @@
+---
+title: Eidetic Memory Demo
+emoji: 🧠
+colorFrom: indigo
+colorTo: blue
+sdk: docker
+pinned: true
+app_port: 7860
+---
+
 # 🧠 Eidetic Memory
 
 **Long-term memory for AI agents — extracts, evolves, and retrieves facts across conversations.**
