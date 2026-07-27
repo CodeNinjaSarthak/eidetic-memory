@@ -1,0 +1,19 @@
+name: HF Space Keep Alive
+
+on:
+  schedule:
+    # Runs at minute 5 of every 2nd hour (00:05, 02:05, 04:05 UTC)
+    - cron: '5 */2 * * *'
+  # Allows manual runs from the Actions UI
+  workflow_dispatch:
+
+jobs:
+  ping-space:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send keep-alive request to HF Space
+        run: |
+          echo "Pinging Hugging Face Space..."
+          # Max time set to 240 seconds (4 minutes) for cold starts
+          curl -s -S -L --max-time 240 "https://sarthak4156-eidetic-memory-demo.hf.space/health" -o /dev/null -w "HTTP Status Code: %{http_code}\n"
